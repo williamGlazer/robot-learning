@@ -1,4 +1,4 @@
-.PHONY: clean data lint requirements
+.PHONY: clean data lint requirements create_environment
 
 #################################################################################
 # GLOBALS                                                                       #

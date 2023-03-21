@@ -5,8 +5,8 @@ import gym
 import time
 import core
 from logx import EpochLogger
-from mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
-from mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
+# from mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
+from mpi_tools import mpi_statistics_scalar
 
 
 class VPGBuffer:
@@ -176,14 +176,14 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     """
 
     # Special function to avoid certain slowdowns from PyTorch + MPI combo.
-    setup_pytorch_for_mpi()
+    # setup_pytorch_for_mpi()
 
     # Set up logger and save configuration
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
     # Random seed
-    seed += 10000 * proc_id()
+    # seed += 10000 * proc_id()
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -196,7 +196,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
 
     # Sync params across processes
-    sync_params(ac)
+    # sync_params(ac)
 
     # Count variables
     var_counts = tuple(core.count_vars(module) for module in [ac.pi, ac.v])
@@ -245,7 +245,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         pi_optimizer.zero_grad()
         loss_pi, pi_info = compute_loss_pi(data)
         loss_pi.backward()
-        mpi_avg_grads(ac.pi)  # average grads across MPI processes
+        # mpi_avg_grads(ac.pi)  # average grads across MPI processes
         pi_optimizer.step()
 
         # Value function learning
@@ -253,7 +253,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             vf_optimizer.zero_grad()
             loss_v = compute_loss_v(data)
             loss_v.backward()
-            mpi_avg_grads(ac.v)  # average grads across MPI processes
+            # mpi_avg_grads(ac.v)  # average grads across MPI processes
             vf_optimizer.step()
 
         # Log changes from update
@@ -339,7 +339,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, default='vpg')
     args = parser.parse_args()
 
-    mpi_fork(args.cpu)  # run parallel code with mpi
+    # mpi_fork(args.cpu)  # run parallel code with mpi
 
     from spinup.utils.run_utils import setup_logger_kwargs
 

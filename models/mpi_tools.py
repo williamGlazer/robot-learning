@@ -66,7 +66,8 @@ def mpi_sum(x):
 def mpi_avg(x):
     """Average a scalar or vector over MPI processes."""
     return mpi_sum(x) / num_procs()
-    
+
+# TODO add multithread support
 def mpi_statistics_scalar(x, with_min_and_max=False):
     """
     Get mean/std and optional min/max of scalar x across MPI processes.
@@ -79,14 +80,19 @@ def mpi_statistics_scalar(x, with_min_and_max=False):
             addition to mean and std.
     """
     x = np.array(x, dtype=np.float32)
-    global_sum, global_n = mpi_sum([np.sum(x), len(x)])
-    mean = global_sum / global_n
+    # global_sum, global_n = mpi_sum([np.sum(x), len(x)])
+    # mean = global_sum / global_n
+    mean = np.mean(x)
 
-    global_sum_sq = mpi_sum(np.sum((x - mean)**2))
-    std = np.sqrt(global_sum_sq / global_n)  # compute global std
+    # global_sum_sq = mpi_sum(np.sum((x - mean)**2))
+    # std = np.sqrt(global_sum_sq / global_n)  # compute global std
+    std = np.std(x)
 
     if with_min_and_max:
-        global_min = mpi_op(np.min(x) if len(x) > 0 else np.inf, op=MPI.MIN)
-        global_max = mpi_op(np.max(x) if len(x) > 0 else -np.inf, op=MPI.MAX)
+        # global_min = mpi_op(np.min(x) if len(x) > 0 else np.inf, op=MPI.MIN)
+        # global_max = mpi_op(np.max(x) if len(x) > 0 else -np.inf, op=MPI.MAX)
+        global_min = np.min(x) if len(x) > 0 else np.inf
+        global_max = np.max(x) if len(x) > 0 else -np.inf
         return mean, std, global_min, global_max
     return mean, std
+

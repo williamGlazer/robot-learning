@@ -6,6 +6,8 @@ click
 coverage
 black
 python-dotenv>=0.5.1
-jax[cuda]
 dm-haiku
 optax
+jupyter
+gymnasium
+mpi4py

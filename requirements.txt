@@ -9,5 +9,4 @@ python-dotenv>=0.5.1
 dm-haiku
 optax
 jupyter
-gymnasium
-mpi4py
+gym

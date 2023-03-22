@@ -1,4 +1,5 @@
-import numpy as np
+# import numpy as np
+from jax import numpy as jnp
 # import torch
 # from torch.optim import Adam
 import gym
@@ -17,13 +18,13 @@ class VPGBuffer:
     """
 
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
-        self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
-        self.adv_buf = np.zeros(size, dtype=np.float32)
-        self.rew_buf = np.zeros(size, dtype=np.float32)
-        self.ret_buf = np.zeros(size, dtype=np.float32)
-        self.val_buf = np.zeros(size, dtype=np.float32)
-        self.logp_buf = np.zeros(size, dtype=np.float32)
+        self.obs_buf = jnp.zeros(core.combined_shape(size, obs_dim), dtype=jnp.float32)
+        self.act_buf = jnp.zeros(core.combined_shape(size, act_dim), dtype=jnp.float32)
+        self.adv_buf = jnp.zeros(size, dtype=jnp.float32)
+        self.rew_buf = jnp.zeros(size, dtype=jnp.float32)
+        self.ret_buf = jnp.zeros(size, dtype=jnp.float32)
+        self.val_buf = jnp.zeros(size, dtype=jnp.float32)
+        self.logp_buf = jnp.zeros(size, dtype=jnp.float32)
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
@@ -56,8 +57,8 @@ class VPGBuffer:
         """
 
         path_slice = slice(self.path_start_idx, self.ptr)
-        rews = np.append(self.rew_buf[path_slice], last_val)
-        vals = np.append(self.val_buf[path_slice], last_val)
+        rews = jnp.append(self.rew_buf[path_slice], last_val)
+        vals = jnp.append(self.val_buf[path_slice], last_val)
 
         # the next two lines implement GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
@@ -185,7 +186,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Random seed
     # seed += 10000 * proc_id()
     torch.manual_seed(seed)
-    np.random.seed(seed)
+    jnp.random.seed(seed)
 
     # Instantiate environment
     env = env_fn()

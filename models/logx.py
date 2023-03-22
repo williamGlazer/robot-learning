@@ -8,7 +8,8 @@ Logs to a tab-separated-values file (path/to/output_directory/progress.txt)
 import json
 import joblib
 import shutil
-import numpy as np
+# import numpy as np
+from jax import numpy as jnp
 import tensorflow as tf
 import torch
 import os.path as osp, time, atexit, os
@@ -338,7 +339,7 @@ class EpochLogger(Logger):
             super().log_tabular(key,val)
         else:
             v = self.epoch_dict[key]
-            vals = np.concatenate(v) if isinstance(v[0], np.ndarray) and len(v[0].shape)>0 else v
+            vals = jnp.concatenate(v) if isinstance(v[0], jnp.ndarray) and len(v[0].shape)>0 else v
             stats = mpi_statistics_scalar(vals, with_min_and_max=with_min_and_max)
             super().log_tabular(key if average_only else 'Average' + key, stats[0])
             if not(average_only):
@@ -353,5 +354,5 @@ class EpochLogger(Logger):
         Lets an algorithm ask the logger for mean/std/min/max of a diagnostic.
         """
         v = self.epoch_dict[key]
-        vals = np.concatenate(v) if isinstance(v[0], np.ndarray) and len(v[0].shape)>0 else v
+        vals = jnp.concatenate(v) if isinstance(v[0], jnp.ndarray) and len(v[0].shape)>0 else v
         return mpi_statistics_scalar(vals)

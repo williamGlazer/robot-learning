@@ -1,4 +1,5 @@
-import numpy as np
+# import numpy as np
+from jax import numpy as jnp
 import scipy.signal
 from gym.spaces import Box, Discrete
 
@@ -23,7 +24,7 @@ def mlp(sizes, activation, output_activation=nn.Identity) -> nn.Sequential:
 
 
 def count_vars(module) -> int:
-    return sum([np.prod(p.shape) for p in module.parameters()])
+    return sum([jnp.prod(p.shape) for p in module.parameters()])
 
 
 def discount_cumsum(x, discount):
@@ -81,7 +82,7 @@ class MLPGaussianActor(Actor):
 
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
-        log_std = -0.5 * np.ones(act_dim, dtype=np.float32)
+        log_std = -0.5 * jnp.ones(act_dim, dtype=np.float32)
         self.log_std = torch.nn.Parameter(torch.as_tensor(log_std))
         self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 

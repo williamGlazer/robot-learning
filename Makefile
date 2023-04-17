@@ -6,7 +6,7 @@
 
 PROJECT_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PROJECT_NAME = robot-learning
-PYTHON_INTERPRETER = python3
+PYTHON_INTERPRETER = python
 
 ifeq (,$(shell which conda))
 HAS_CONDA=False
@@ -18,10 +18,16 @@ endif
 # COMMANDS                                                                      #
 #################################################################################
 
+PYTHON_VERSION=cp36
+CUDA_VERSION=cuda101
+PLATFORM=linux_x86_64
+BASE_URL='https://storage.googleapis.com/jax-releases'
+
 ## Install Python Dependencies
 requirements: test_environment
 	conda install -c conda-forge cudatoolkit=11.8.0 cudnn=8.4.1.50
 	$(PYTHON_INTERPRETER) -m pip install -U pip setuptools wheel
+	$(PYTHON_INTERPRETER) -m pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
 
 ## Make Dataset
@@ -41,7 +47,7 @@ lint:
 create_environment:
 ifeq (True,$(HAS_CONDA))
 	@echo ">>> Detected conda, creating conda environment."
-	conda create -n $(PROJECT_NAME) python=3.11
+	conda create -n $(PROJECT_NAME) python pip -y
 else
 	@echo "project requires conda to work, aborting"
 endif

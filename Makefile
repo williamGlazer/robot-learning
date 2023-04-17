@@ -20,6 +20,7 @@ endif
 
 ## Install Python Dependencies
 requirements: test_environment
+	conda install -c conda-forge cudatoolkit=11.8.0 cudnn=8.4.1.50
 	$(PYTHON_INTERPRETER) -m pip install -U pip setuptools wheel
 	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
 
@@ -40,7 +41,7 @@ lint:
 create_environment:
 ifeq (True,$(HAS_CONDA))
 	@echo ">>> Detected conda, creating conda environment."
-	conda create -n $(PROJECT_NAME) -c conda-forge cudatoolkit=11.8.0 cudnn=8.4.1.50
+	conda create -n $(PROJECT_NAME) python=3.11
 else
 	@echo "project requires conda to work, aborting"
 endif

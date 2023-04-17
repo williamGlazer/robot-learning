@@ -25,6 +25,7 @@ BASE_URL='https://storage.googleapis.com/jax-releases'
 
 ## Install Python Dependencies
 requirements: test_environment
+	conda install -c conda-forge cudatoolkit=11.8.0 cudnn=8.4.1.50
 	$(PYTHON_INTERPRETER) -m pip install -U pip setuptools wheel
 	$(PYTHON_INTERPRETER) -m pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt

@@ -76,7 +76,7 @@ class MLPCritic(hk.Module):
         self.v_net = hk.nets.MLP(list(hidden_sizes) + [1], activation=activation)
 
     def __call__(self, obs):
-        return self.v_net(obs)
+        return self.v_net(obs).squeeze(axis=-1)
 
 
 class MLPActorCritic:
@@ -105,17 +105,19 @@ class MLPActorCritic:
         self.v_params = self.v.init(critic_rng, sample_state)
 
     @functools.partial(jax.jit, static_argnums=0)
-    def forward(self, obs, rng: jnp.ndarray):
+    def forward(self, pi_params, v_params, obs, rng: jnp.ndarray):
         actor_rand, critic_rand, sample_rand = jax.random.split(rng, num=3)
 
-        pi = self.pi.apply(self.pi_params, x=obs, rng=actor_rand)
+        pi = self.pi.apply(pi_params, x=obs, rng=actor_rand)
         a = pi.sample(seed=sample_rand)
         logp_a = self._log_prob_from_distribution(pi=pi, act=a)
-        v = self.v.apply(self.v_params, x=obs, rng=critic_rand)
+        v = self.v.apply(v_params, x=obs, rng=critic_rand)
 
         return a, v, logp_a
+
+    @functools.partial(jax.jit, static_argnums=0)
     def _log_prob_from_distribution(self, pi, act):
         if isinstance(self.action_space, Box):
             return pi.log_prob(act)
         elif isinstance(self.action_space, Discrete):
-            return pi.log_prob(act).sum(axis=-1)
+            raise NotImplementedError

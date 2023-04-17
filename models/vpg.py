@@ -77,8 +77,8 @@ class VPGBuffer:
         """
         self.ptr, self.path_start_idx = 0, 0
         # the next two lines implement the advantage normalization trick
-        adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
-        self.adv_buf = (self.adv_buf - adv_mean) / (adv_std+1e-9)
+        adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf) if (self.adv_buf != 0).any() else 1.0
+        self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
                     adv=self.adv_buf, logp=self.logp_buf)
         return data
@@ -193,20 +193,19 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     ac = actor_critic(env.action_space, ac_rng, sample_state,  **ac_kwargs)
 
     # Count variables
-    # var_counts = tuple(core.count_vars(module) for module in [ac.pi, ac.v])
-    # logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n' % var_counts)
+    var_counts = sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.pi_params))), sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.v_params)))
+    logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n' % var_counts)
 
     # Set up experience buffer
     buf = VPGBuffer(obs_dim, act_dim, steps_per_epoch, gamma, lam)
 
     # Set up function for computing VPG policy loss
     @jax.jit
-    def compute_loss_pi(pi_params, data):
+    def compute_loss_pi(pi_params, data, rng):
         obs, act, adv, logp_old = data['obs'], data['act'], data['adv'], data['logp']
-        _, sample_rand, actor_rng = jax.random.split(key, num=3)  # TODO non-deterministic
 
         # Policy loss
-        pi = ac.pi.apply(pi_params, x=obs, rng=actor_rng)
+        pi = ac.pi.apply(pi_params, x=obs, rng=rng)
         logp = ac._log_prob_from_distribution(pi=pi, act=act)
         loss_pi = -(logp * adv).mean()
 
@@ -219,10 +218,9 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Set up function for computing value loss
     @jax.jit
-    def compute_loss_v(v_params, data):
-        _, v_rng = jax.random.split(key)  # TODO non-deterministic
+    def compute_loss_v(v_params, data, rng):
         obs, ret = data['obs'], data['ret']
-        return ((ac.v.apply(v_params, x=obs, rng=v_rng) - ret) ** 2).mean()
+        return ((ac.v.apply(v_params, x=obs, rng=rng) - ret) ** 2).mean()
 
     # Set up optimizers for policy and value function
     pi_optimizer = adam(pi_lr)
@@ -233,32 +231,32 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Set up model saving
     # logger.setup_pytorch_saver(ac)
-
     @jax.jit
-    def update_pi(pi_opt_state, data):
+    def update_pi(pi_opt_state, pi_params, data, rng):
         # Train policy with a single step of gradient descent
-        (loss_pi, pi_info), pi_gradient = jax.value_and_grad(compute_loss_pi, has_aux=True)(ac.pi_params, data)
-        pi_updates, pi_opt_state = pi_optimizer.update(updates=pi_gradient, state=pi_opt_state)
-        pi_params = optax.apply_updates(params=ac.pi_params, updates=pi_updates)
-        return pi_params, loss_pi, pi_info
+        (loss_pi, pi_info), pi_gradient = jax.value_and_grad(compute_loss_pi, has_aux=True)(pi_params, data, rng)
+        pi_updates, pi_opt_state = pi_optimizer.update(updates=pi_gradient, state=pi_opt_state, params=pi_params)
+        pi_new_params = optax.apply_updates(params=pi_params, updates=pi_updates)
+        return pi_opt_state, pi_new_params, loss_pi, pi_info
 
     @jax.jit
-    def update_vf(vf_opt_state, data):
-        loss_v, v_gradient = jax.value_and_grad(compute_loss_v)(ac.v_params, data)
-        vf_updates, vf_opt_state = vf_optimizer.update(updates=v_gradient, state=vf_opt_state)
-        vf_params = optax.apply_updates(params=ac.v_params, updates=vf_updates)
-        return vf_params, loss_v
+    def update_vf(vf_opt_state, v_params, data, rng):
+        loss_v, v_gradient = jax.value_and_grad(compute_loss_v)(v_params, data, rng)
+        vf_updates, vf_opt_state = vf_optimizer.update(updates=v_gradient, state=vf_opt_state, params=v_params)
+        vf_new_params = optax.apply_updates(params=v_params, updates=vf_updates)
+        return vf_opt_state, vf_new_params, loss_v
 
-    def update(pi_opt_state, vf_opt_state, warmup=False):
+    def update(pi_opt_state, vf_opt_state, step_rng, warmup=False):
         data = buf.get()
 
-        pi_params, loss_pi, pi_info = update_pi(pi_opt_state, data)
+        pi_opt_state, pi_params, loss_pi, pi_info = update_pi(pi_opt_state, ac.pi_params, data, step_rng)
         if not warmup:
             ac.pi_params = pi_params
+        old_loss_pi, _ = compute_loss_pi(ac.pi_params, data, step_rng)
 
         # Value function learning
         for i in range(train_v_iters):
-            vf_params, loss_v = update_vf(vf_opt_state, data)
+            vf_opt_state, vf_params, loss_v = update_vf(vf_opt_state, ac.v_params, data, step_rng)
             if not warmup:
                 ac.v_params = vf_params
             if i == 0:
@@ -268,14 +266,14 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         kl, ent = pi_info['kl'], pi_info['ent']
         logger.store(LossPi=loss_pi, LossV=first_loss_v,
                      KL=kl, Entropy=ent,
-                     DeltaLossPi=0,
+                     DeltaLossPi=old_loss_pi - loss_pi,
                      DeltaLossV=loss_v - first_loss_v
         )
 
         return pi_opt_state, vf_opt_state
 
     print("warmup...")
-    update(pi_opt_state, vf_opt_state, warmup=True)
+    update(pi_opt_state, vf_opt_state, key, warmup=True)
     print("Done")
 
     # Prepare for interaction with environment
@@ -286,7 +284,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     for epoch in range(epochs):
         for t in range(steps_per_epoch):
             key, step_rng = jax.random.split(key)
-            a, v, logp = ac.forward(o, step_rng)
+            a, v, logp = ac.forward(ac.pi_params, ac.v_params, o, step_rng)
 
             next_o, r, d, _, _ = env.step(a)
             ep_ret += r
@@ -308,7 +306,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                     print('Warning: trajectory cut off by epoch at %d steps.' % ep_len, flush=True)
                 # if trajectory didn't reach terminal state, bootstrap value target
                 if timeout or epoch_ended:
-                    _, v, _ = ac.forward(o, step_rng)
+                    _, v, _ = ac.forward(ac.pi_params, ac.v_params, o, step_rng)
                 else:
                     v = 0
                 buf.finish_path(v)
@@ -322,7 +320,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             logger.save_state({'env': env}, None)
 
         # Perform VPG update!
-        pi_opt_state, vf_opt_state = update(pi_opt_state, vf_opt_state)
+        pi_opt_state, vf_opt_state = update(pi_opt_state, vf_opt_state, step_rng)
 
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)
@@ -349,7 +347,7 @@ if __name__ == '__main__':
     parser.add_argument('--l', type=int, default=2)
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--steps', type=int, default=3000)
+    parser.add_argument('--steps', type=int, default=5000)
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--exp_name', type=str, default='vpg')
     args = parser.parse_args()
@@ -359,6 +357,6 @@ if __name__ == '__main__':
     logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 
     vpg(lambda: gym.make(args.env), actor_critic=core.MLPActorCritic,
-        ac_kwargs=dict(hidden_sizes=[args.hid] * args.l), gamma=args.gamma,
+        ac_kwargs=dict(hidden_sizes=(128, 64), activation=jax.nn.tanh), gamma=args.gamma,
         seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
         logger_kwargs=logger_kwargs)

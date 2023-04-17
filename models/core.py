@@ -1,136 +1,121 @@
-# import numpy as np
-from jax import numpy as jnp
-import scipy.signal
+import functools
+from typing import Mapping
+
+import jax
+from jax import numpy as jnp, Array
 from gym.spaces import Box, Discrete
 
-# import torch
-# import torch.nn as nn
-# from torch.distributions.normal import Normal
-# from torch.distributions.categorical import Categorical
+import scipy
+
+import haiku as hk
+from distrax import Categorical, MultivariateNormalDiag
 
 
-def combined_shape(length, shape=None) -> tuple:
+def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
-    return (length, shape) if np.isscalar(shape) else (length, *shape)
-
-
-def mlp(sizes, activation, output_activation=nn.Identity) -> nn.Sequential:
-    layers = []
-    for j in range(len(sizes)-1):
-        act = activation if j < len(sizes)-2 else output_activation
-        layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
-    return nn.Sequential(*layers)
-
-
-def count_vars(module) -> int:
-    return sum([jnp.prod(p.shape) for p in module.parameters()])
+    return (length, shape) if jnp.isscalar(shape) else (length, *shape)
 
 
 def discount_cumsum(x, discount):
     """
     magic from rllab for computing discounted cumulative sums of vectors.
-
-    input: 
-        vector x, 
-        [x0, 
-         x1, 
+    input:
+        vector x,
+        [x0,
+         x1,
          x2]
-
     output:
-        [x0 + discount * x1 + discount^2 * x2,  
+        [x0 + discount * x1 + discount^2 * x2,
          x1 + discount * x2,
          x2]
     """
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-class Actor(nn.Module):
+
+class Actor(hk.Module):
 
     def _distribution(self, obs):
         raise NotImplementedError
 
-    def _log_prob_from_distribution(self, pi, act):
-        raise NotImplementedError
-
-    def forward(self, obs, act=None):
-        # Produce action distributions for given observations, and 
-        # optionally compute the log likelihood of given actions under
-        # those distributions.
-        pi = self._distribution(obs)
-        logp_a = None
-        if act is not None:
-            logp_a = self._log_prob_from_distribution(pi, act)
-        return pi, logp_a
+    def __call__(self, obs):
+        return self._distribution(obs)
 
 
 class MLPCategoricalActor(Actor):
     
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, act_dim, hidden_sizes, activation):
         super().__init__()
-        self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        self.logits_net = hk.nets.MLP(list(hidden_sizes) + [act_dim], activation=activation)
+        raise NotImplementedError("Not properly tested since didn't know if required")
 
     def _distribution(self, obs):
         logits = self.logits_net(obs)
         return Categorical(logits=logits)
 
-    def _log_prob_from_distribution(self, pi, act):
-        return pi.log_prob(act)
-
 
 class MLPGaussianActor(Actor):
 
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, act_dim, hidden_sizes, activation):
         super().__init__()
-        log_std = -0.5 * jnp.ones(act_dim, dtype=np.float32)
-        self.log_std = torch.nn.Parameter(torch.as_tensor(log_std))
-        self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        self.act_dim = act_dim
+        self.mu_net = hk.nets.MLP(list(hidden_sizes) + [act_dim], activation=activation)
 
     def _distribution(self, obs):
         mu = self.mu_net(obs)
-        std = torch.exp(self.log_std)
-        return Normal(mu, std)
-
-    def _log_prob_from_distribution(self, pi, act):
-        return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
+        log_std = hk.get_parameter("log_std", [self.act_dim], init=hk.initializers.Constant(-0.5))
+        std = jnp.exp(log_std)
+        return MultivariateNormalDiag(mu, std)
 
 
-class MLPCritic(nn.Module):
+class MLPCritic(hk.Module):
 
-    def __init__(self, obs_dim, hidden_sizes, activation):
+    def __init__(self, hidden_sizes, activation):
         super().__init__()
-        self.v_net = mlp([obs_dim] + list(hidden_sizes) + [1], activation)
+        self.v_net = hk.nets.MLP(list(hidden_sizes) + [1], activation=activation)
 
-    def forward(self, obs):
-        return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
-
-
-
-class MLPActorCritic(nn.Module):
+    def __call__(self, obs):
+        return self.v_net(obs)
 
 
-    def __init__(self, observation_space, action_space, 
-                 hidden_sizes=(64,64), activation=nn.Tanh):
-        super().__init__()
+class MLPActorCritic:
 
-        obs_dim = observation_space.shape[0]
+    def __init__(
+            self,
+            action_space,
+            rng: jnp.ndarray,
+            sample_state: jnp.ndarray,
+            hidden_sizes=(64, 64),
+            activation=jax.nn.tanh,
+    ):
+        self.action_space = action_space
+        (act_dim, ) = action_space.shape   # unpack tuple dimension
+        actor_rng, critic_rng = jax.random.split(rng)
 
         # policy builder depends on action space
         if isinstance(action_space, Box):
-            self.pi = MLPGaussianActor(obs_dim, action_space.shape[0], hidden_sizes, activation)
+            self.pi = hk.transform(lambda x: MLPGaussianActor(act_dim, hidden_sizes, activation)(x))
         elif isinstance(action_space, Discrete):
-            self.pi = MLPCategoricalActor(obs_dim, action_space.n, hidden_sizes, activation)
+            self.pi = hk.transform(lambda x: MLPCategoricalActor(act_dim, hidden_sizes, activation)(x))
+        self.pi_params = self.pi.init(actor_rng, sample_state)
 
         # build value function
-        self.v = MLPCritic(obs_dim, hidden_sizes, activation)
+        self.v = hk.transform(lambda x: MLPCritic(hidden_sizes, activation)(x))
+        self.v_params = self.v.init(critic_rng, sample_state)
 
-    def step(self, obs):
-        with torch.no_grad():
-            pi = self.pi._distribution(obs)
-            a = pi.sample()
-            logp_a = self.pi._log_prob_from_distribution(pi, a)
-            v = self.v(obs)
-        return a.numpy(), v.numpy(), logp_a.numpy()
+    @functools.partial(jax.jit, static_argnums=0)
+    def forward(self, obs, rng: jnp.ndarray):
+        actor_rand, critic_rand, sample_rand = jax.random.split(rng, num=3)
 
-    def act(self, obs):
-        return self.step(obs)[0]
+        pi = self.pi.apply(self.pi_params, x=obs, rng=actor_rand)
+        a = pi.sample(seed=sample_rand)
+        logp_a = self._log_prob_from_distribution(pi=pi, act=a)
+        v = self.v.apply(self.v_params, x=obs, rng=critic_rand)
+
+        return a, v, logp_a
+    def _log_prob_from_distribution(self, pi, act):
+        if isinstance(self.action_space, Box):
+            return pi.log_prob(act)
+        elif isinstance(self.action_space, Discrete):
+            return pi.log_prob(act).sum(axis=-1)

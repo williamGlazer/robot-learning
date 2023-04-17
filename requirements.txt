@@ -10,3 +10,6 @@ dm-haiku
 optax
 jupyter
 gym
+distrax
+joblib
+mujoco_py

@@ -10,11 +10,11 @@ import joblib
 import shutil
 # import numpy as np
 from jax import numpy as jnp
-import tensorflow as tf
-import torch
+# import tensorflow as tf
+# import torch
 import os.path as osp, time, atexit, os
 import warnings
-from mpi_tools import proc_id, mpi_statistics_scalar
+from mpi_tools import mpi_statistics_scalar
 from serialization_utils import convert_json
 
 color2num = dict(
@@ -70,7 +70,7 @@ class Logger:
                 hyperparameter configuration with multiple random seeds, you
                 should give them all the same ``exp_name``.)
         """
-        if proc_id()==0:
+        if True:#proc_id()==0:
             self.output_dir = output_dir or "/tmp/experiments/%i"%int(time.time())
             if osp.exists(self.output_dir):
                 print("Warning: Log dir %s already exists! Storing info there anyway."%self.output_dir)
@@ -89,7 +89,7 @@ class Logger:
 
     def log(self, msg, color='green'):
         """Print a colorized message to stdout."""
-        if proc_id()==0:
+        if True: #proc_id()==0:
             print(colorize(msg, color, bold=True))
 
     def log_tabular(self, key, val):
@@ -127,7 +127,7 @@ class Logger:
         config_json = convert_json(config)
         if self.exp_name is not None:
             config_json['exp_name'] = self.exp_name
-        if proc_id()==0:
+        if True:#proc_id()==0:
             output = json.dumps(config_json, separators=(',',':\t'), indent=4, sort_keys=True)
             print(colorize('Saving config:\n', color='cyan', bold=True))
             print(output)
@@ -155,7 +155,7 @@ class Logger:
 
             itr: An int, or None. Current iteration of training.
         """
-        if proc_id()==0:
+        if True: #proc_id()==0:
             fname = 'vars.pkl' if itr is None else 'vars%d.pkl'%itr
             try:
                 joblib.dump(state_dict, osp.join(self.output_dir, fname))
@@ -187,23 +187,23 @@ class Logger:
         self.tf_saver_elements = dict(session=sess, inputs=inputs, outputs=outputs)
         self.tf_saver_info = {'inputs': {k:v.name for k,v in inputs.items()},
                               'outputs': {k:v.name for k,v in outputs.items()}}
-
-    def _tf_simple_save(self, itr=None):
-        """
-        Uses simple_save to save a trained model, plus info to make it easy
-        to associated tensors to variables after restore. 
-        """
-        if proc_id()==0:
-            assert hasattr(self, 'tf_saver_elements'), \
-                "First have to setup saving with self.setup_tf_saver"
-            fpath = 'tf1_save' + ('%d'%itr if itr is not None else '')
-            fpath = osp.join(self.output_dir, fpath)
-            if osp.exists(fpath):
-                # simple_save refuses to be useful if fpath already exists,
-                # so just delete fpath if it's there.
-                shutil.rmtree(fpath)
-            tf.saved_model.simple_save(export_dir=fpath, **self.tf_saver_elements)
-            joblib.dump(self.tf_saver_info, osp.join(fpath, 'model_info.pkl'))
+    #
+    # def _tf_simple_save(self, itr=None):
+    #     """
+    #     Uses simple_save to save a trained model, plus info to make it easy
+    #     to associated tensors to variables after restore.
+    #     """
+    #     if proc_id()==0:
+    #         assert hasattr(self, 'tf_saver_elements'), \
+    #             "First have to setup saving with self.setup_tf_saver"
+    #         fpath = 'tf1_save' + ('%d'%itr if itr is not None else '')
+    #         fpath = osp.join(self.output_dir, fpath)
+    #         if osp.exists(fpath):
+    #             # simple_save refuses to be useful if fpath already exists,
+    #             # so just delete fpath if it's there.
+    #             shutil.rmtree(fpath)
+    #         tf.saved_model.simple_save(export_dir=fpath, **self.tf_saver_elements)
+    #         joblib.dump(self.tf_saver_info, osp.join(fpath, 'model_info.pkl'))
     
 
     def setup_pytorch_saver(self, what_to_save):
@@ -226,7 +226,7 @@ class Logger:
         """
         Saves the PyTorch model (or models).
         """
-        if proc_id()==0:
+        if True: #proc_id()==0:
             assert hasattr(self, 'pytorch_saver_elements'), \
                 "First have to setup saving with self.setup_pytorch_saver"
             fpath = 'pyt_save'
@@ -253,7 +253,7 @@ class Logger:
 
         Writes both to stdout, and to the output file.
         """
-        if proc_id()==0:
+        if True: #proc_id()==0:
             vals = []
             key_lens = [len(key) for key in self.log_headers]
             max_key_len = max(15,max(key_lens))

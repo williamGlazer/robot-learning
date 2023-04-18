@@ -10,6 +10,6 @@ dm-haiku
 optax
 jupyter
 gym
-distrax --install-option="--no-deps"
 joblib
 mujoco_py
+tensorflow_probability

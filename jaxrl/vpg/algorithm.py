@@ -4,7 +4,7 @@ import jax
 from optax import adam
 import gym
 import time
-import jaxrl.vpg.core as core
+import core
 from jaxrl.utils.logx import EpochLogger
 
 # class needs to use raw numpy to avoid copying a table of immutable JNP arrays
@@ -350,9 +350,9 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, default='vpg')
     args = parser.parse_args()
 
-    from run_utils import setup_logger_kwargs
+    from jaxrl.utils.run_utils import setup_logger_kwargs
 
-    logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
+    logger_kwargs = setup_logger_kwargs(args.exp_name, seed=args.seed, data_dir='../../data')
 
     vpg(lambda: gym.make(args.env), actor_critic=core.MLPActorCritic,
         ac_kwargs=dict(hidden_sizes=(128, 64), activation=jax.nn.tanh), gamma=args.gamma,

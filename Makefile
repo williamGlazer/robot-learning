@@ -21,18 +21,14 @@ endif
 PYTHON_VERSION=cp36
 CUDA_VERSION=cuda101
 PLATFORM=linux_x86_64
-BASE_URL='https://storage.googleapis.com/jax-releases'
+BASE_URL='https://storage.googleapis.com/jax-releases/jax_cuda_releases.html'
 
-## Install Python Dependencies
+## Install Python Dependencies, to disable GPU append cpu=true
 requirements: test_environment
-	conda install -c conda-forge cudatoolkit=11.8.0 cudnn=8.4.1.50
 	$(PYTHON_INTERPRETER) -m pip install -U pip setuptools wheel
-	$(PYTHON_INTERPRETER) -m pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+	$(PYTHON_INTERPRETER) -m pip install --upgrade "jax[cuda12_pip]" -f $(BASE_URL)
 	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
-
-## Make Dataset
-data: requirements
-	$(PYTHON_INTERPRETER) src/data/make_dataset.py data/raw data/processed
+	$(PYTHON_INTERPRETER) -m pip install distrax --no-deps
 
 ## Delete all compiled Python files
 clean:

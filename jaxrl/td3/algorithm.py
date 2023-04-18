@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -162,34 +164,44 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     act_limit = env.action_space.high[0]
 
     # Create actor-critic module and target networks
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-    ac_targ = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
+    # TODO finalize
+    actor_critic = actor_critic(sample_state, sample_action, rng, env.action_space, **ac_kwargs)
+    actor_critic_target = actor_critic(sample_state, sample_action, rng, env.observation_space, env.action_space, **ac_kwargs)
 
     # Experience buffer
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
 
     # Count variables (protip: try to get a feel for how different size networks behave!)
-    var_counts = tuple(core.count_vars(module) for module in [ac.pi_params, ac.q1_params, ac.q2_params])
+    var_counts = tuple(core.count_vars(module) for module in [actor_critic.pi_params, actor_critic.q1_params, actor_critic.q2_params])
     logger.log('\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
+
+    class TrainState:
+        def __init__(self, ac, ac_tgt, pi_opt, q1_opt, q2_opt):
+            self.ac = ac
+            self.ac_tgt = ac_tgt
+            self.pi_opt_state = pi_opt.init(self.ac.pi_params)
+            self.q1_opt_state = q1_opt.init(self.ac.q1_params)
+            self.q2_opt_state = q2_opt.init(self.ac.q2_params)
 
     # Set up function for computing TD3 Q-losses
     def compute_loss_q(
-            q1_params: hk.Params,
-            q2_params: hk.Params,
-            tgt_pi_params: hk.params,
-            tgt_q1_params: hk.Params,
-            tgt_q2_params: hk.Params,
+            q1_params,
+            q2_params,
+            train_state: TrainState,
+            data: dict,
             rng: jnp.ndarray,
-            data: dict
     ):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
         _, q1_rng, q2_rng, pi_tgt_rng, q1_tgt_rng, q2_tgt_rng = jax.random.split(rng, num=6)
+
+        ac = train_state.ac
+        ac_tgt = train_state.ac_tgt
 
         q1 = ac.q1.apply(q1_params, (o, a), q1_rng)
         q2 = ac.q2.apply(q2_params, (o, a), q2_rng)
 
         # Bellman backup for Q functions
-        pi_targ = ac_targ.pi.apply(tgt_pi_params, (o2,), pi_tgt_rng)
+        pi_targ = ac_tgt.pi.apply(ac_tgt.pi_params, (o2,), pi_tgt_rng)
 
         # Target policy smoothing
         epsilon = jax.randn_like(pi_targ) * target_noise
@@ -198,8 +210,8 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         a2 = jax.clamp(a2, -act_limit, act_limit)
 
         # Target Q-values
-        q1_pi_targ = ac_targ.q1.apply(tgt_q1_params, (o2, a2))
-        q2_pi_targ = ac_targ.q2.apply(tgt_q2_params, (o2, a2))
+        q1_pi_targ = ac_tgt.q1.apply(ac_tgt.q1_params, (o2, a2))
+        q2_pi_targ = ac_tgt.q2.apply(ac_tgt.q2_params, (o2, a2))
         q_pi_targ = jax.min(q1_pi_targ, q2_pi_targ)
         backup = r + gamma * (1 - d) * q_pi_targ
 
@@ -218,74 +230,99 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         return loss_q, loss_info
 
     # Set up function for computing TD3 pi loss
-    def compute_loss_pi(pi_params: hk.Params, q1_params: hk.Params, data, rng):
+    def compute_loss_pi(train_state: TrainState, data, rng):
         o = data['obs']
-        a = ac.pi.apply(pi_params, o, rng)
-        q1_pi = ac.q1(q1_params, (o, a), rng)
+        ac = train_state.ac
+        a = ac.pi.apply(ac.pi_params, o, rng)
+        q1_pi = ac.q1(ac.q1_params, (o, a), rng)
         return -q1_pi.mean()
 
     # Set up optimizers for policy and q-function
     pi_optimizer = optax.adam(pi_lr)
-    pi_opt_state = pi_optimizer.init(ac.pi_params)
-
     q1_optimizer = optax.adam(q_lr)
-    q1_opt_state = pi_optimizer.init(ac.q1_params)
     q2_optimizer = optax.adam(q_lr)
-    q2_opt_state = pi_optimizer.init(ac.q2_params)
+
+    train_state = TrainState(
+        ac=actor_critic,
+        ac_tgt=actor_critic_target,
+        pi_opt=pi_optimizer,
+        q1_opt=q1_optimizer,
+        q2_opt=q2_optimizer
+    )
 
     # Set up model saving
     # logger.setup_pytorch_saver(ac)
 
-    def update(data, timer):
+    def update_pi(train_state: TrainState, data, rng):
+        # Train policy with a single step of gradient descent
+        pi_params, pi_opt_state = train_state.ac.pi_params, train_state.pi_opt_state
+        loss_pi, pi_gradient = jax.value_and_grad(compute_loss_pi)(pi_params, train_state, data, rng)
+        pi_updates, pi_new_opt_state = pi_optimizer.update(updates=pi_gradient, state=pi_opt_state, params=pi_params)
+        pi_new_params = optax.apply_updates(params=pi_params, updates=pi_updates)
+        return pi_new_opt_state, pi_new_params, loss_pi
+
+    def update_q(train_state: TrainState, data, rng):
+        # Train policy with a single step of gradient descent
+        q1_params, q2_params = train_state.ac.q1_params, train_state.ac.q2_params
+        q1_opt_state, q2_opt_state = train_state.q1_opt_state, train_state.q2_opt_state
+
+        (loss, loss_info), gradient = jax.value_and_grad(compute_loss_pi, argnums=(0, 1))(q1_params, q2_params, train_state, data, rng)
+
+        q1_updates, q1_new_opt_state = pi_optimizer.update(updates=gradient['q1_params'], state=q1_opt_state, params=q1_params)
+        q1_new_params = optax.apply_updates(params=q1_params, updates=q1_updates)
+
+        q2_updates, q2_new_opt_state = pi_optimizer.update(updates=gradient['q2_params'], state=q2_opt_state, params=q2_params)
+        q2_new_params = optax.apply_updates(params=q2_params, updates=q2_updates)
+
+        return q1_new_opt_state, q2_new_opt_state, q1_new_params, q2_new_params, loss, loss_info
+
+    # TODO jax
+    def update(train_state, data, timer, rng):
         # First run one gradient descent step for Q1 and Q2
-        q_optimizer.zero_grad()
-        loss_q, loss_info = compute_loss_q(data)
-        loss_q.backward()
-        q_optimizer.step()
+        train_state.q1_opt_state, train_state.q1_opt_state, train_state.ac.q1_params, train_state.ac.q2_params, loss_q, loss_info = update_q(train_state, data, rng)
 
         # Record things
-        logger.store(LossQ=loss_q.item(), **loss_info)
+        logger.store(LossQ=loss_q, **loss_info)
 
         # Possibly update pi and target networks
         if timer % policy_delay == 0:
 
-            # Freeze Q-networks so you don't waste computational effort
-            # computing gradients for them during the policy learning step.
-            for p in q_params:
-                p.requires_grad = False
-
+            # TODO if slow look at disabling gradient of QNets
             # Next run one gradient descent step for pi.
-            pi_optimizer.zero_grad()
-            loss_pi = compute_loss_pi(data)
-            loss_pi.backward()
-            pi_optimizer.step()
-
-            # Unfreeze Q-networks so you can optimize it at next DDPG step.
-            for p in q_params:
-                p.requires_grad = True
+            train_state.pi_opt_state, train_state.ac.pi_params, loss_pi = update_pi(train_state, data, rng)
 
             # Record things
             logger.store(LossPi=loss_pi.item())
 
             # Finally, update target networks by polyak averaging.
-            with torch.no_grad():
-                for p, p_targ in zip(ac.parameters(), ac_targ.parameters()):
-                    # NB: We use an in-place operations "mul_", "add_" to update target
-                    # params, as opposed to "mul" and "add", which would make new tensors.
-                    p_targ.data.mul_(polyak)
-                    p_targ.data.add_((1 - polyak) * p.data)
+            train_state.ac_tgt.pi_params = optax.incremental_update(
+                new_tensors=train_state.ac.pi_params,
+                old_tensors=train_state.ac_tgt.pi_params,
+                step_size=polyak
+            )
+            train_state.ac_tgt.q1_params = optax.incremental_update(
+                new_tensors=train_state.ac.q1_params,
+                old_tensors=train_state.ac_tgt.q1_params,
+                step_size=polyak
+            )
+            train_state.ac_tgt.q2_params = optax.incremental_update(
+                new_tensors=train_state.ac.q2_params,
+                old_tensors=train_state.ac_tgt.q2_params,
+                step_size=polyak
+            )
 
-    def get_action(o, noise_scale):
-        a = ac.act(torch.as_tensor(o, dtype=torch.float32))
+    def get_action(o, noise_scale, rng):
+        a = actor_critic.act(o, rng)
         a += noise_scale * np.random.randn(act_dim)
         return np.clip(a, -act_limit, act_limit)
 
-    def test_agent():
+    def test_agent(key):
         for j in range(num_test_episodes):
             o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
             while not (d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = test_env.step(get_action(o, 0))
+                key, step_rng = jax.random.split(key)
+                o, r, d, _ = test_env.step(get_action(o, 0, step_rng))
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -297,12 +334,13 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
+        key, step_rng = jax.random.split(key)
 
         # Until start_steps have elapsed, randomly sample actions
         # from a uniform distribution for better exploration. Afterwards,
         # use the learned policy (with some noise, via act_noise).
         if t > start_steps:
-            a = get_action(o, act_noise)
+            a = get_action(o, act_noise, step_rng)
         else:
             a = env.action_space.sample()
 
@@ -343,7 +381,7 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.
-            test_agent()
+            test_agent(step_rng)
 
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
@@ -375,7 +413,7 @@ if __name__ == '__main__':
 
     from jaxrl.utils.run_utils import setup_logger_kwargs
 
-    logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
+    logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed, '../../data/')
 
     td3(lambda: gym.make(args.env), actor_critic=core.MLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[args.hid] * args.l),

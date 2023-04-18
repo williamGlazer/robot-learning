@@ -1,3 +1,5 @@
+import functools
+
 import jax
 import jax.numpy as jnp
 
@@ -77,5 +79,9 @@ class MLPActorCritic:
         params = transform.init(rng, sample_input)
         return transform, params
 
-    def __call__(self, obs):
-        return self.pi.apply(obs)
+    @functools.partial(jax.jit, static_argnums=0)
+    def __call__(self, pi_params, obs, rng):
+        return self.pi.apply(pi_params, obs, rng)
+
+    def act(self, obs, rng):
+        return self(self.pi_params, obs, rng)

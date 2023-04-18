@@ -1,8 +1,7 @@
 import functools
-from typing import Mapping
 
 import jax
-from jax import numpy as jnp, Array
+from jax import numpy as jnp
 from gym.spaces import Box, Discrete
 
 import scipy

@@ -1,62 +1,81 @@
-import numpy as np
-import scipy.signal
+import jax
+import jax.numpy as jnp
 
-import torch
-import torch.nn as nn
+import haiku as hk
 
 
 def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
-    return (length, shape) if np.isscalar(shape) else (length, *shape)
+    return (length, shape) if jnp.isscalar(shape) else (length, *shape)
 
-def mlp(sizes, activation, output_activation=nn.Identity):
-    layers = []
-    for j in range(len(sizes)-1):
-        act = activation if j < len(sizes)-2 else output_activation
-        layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
-    return nn.Sequential(*layers)
 
-def count_vars(module):
-    return sum([np.prod(p.shape) for p in module.parameters()])
+def count_vars(params):
+    return sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, params)))
 
-class MLPActor(nn.Module):
 
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, act_limit):
+class MLPActor(hk.Module):
+
+    def __init__(self, act_dim, hidden_sizes, act_limit):
         super().__init__()
-        pi_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
-        self.pi = mlp(pi_sizes, activation, nn.Tanh)
+        pi_sizes = list(hidden_sizes) + [act_dim]
+        self.pi = hk.nets.MLP(pi_sizes, activation=jax.nn.tanh)
         self.act_limit = act_limit
 
-    def forward(self, obs):
+    def __call__(self, obs):
         # Return output from network scaled to action space limits.
         return self.act_limit * self.pi(obs)
 
-class MLPQFunction(nn.Module):
+class MLPQFunction(hk.Module):
 
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, hidden_sizes, activation):
         super().__init__()
-        self.q = mlp([obs_dim + act_dim] + list(hidden_sizes) + [1], activation)
+        self.q = hk.nets.MLP(list(hidden_sizes) + [1], activation=activation)
 
-    def forward(self, obs, act):
-        q = self.q(torch.cat([obs, act], dim=-1))
-        return torch.squeeze(q, -1) # Critical to ensure q has right shape.
+    def __call__(self, obs, act):
+        q = self.q(jnp.concatenate([obs, act], dim=-1))
+        return jnp.squeeze(q, -1)  # Critical to ensure q has right shape.
 
-class MLPActorCritic(nn.Module):
+class MLPActorCritic:
 
-    def __init__(self, observation_space, action_space, hidden_sizes=(256,256),
-                 activation=nn.ReLU):
+    def __init__(
+            self,
+            sample_state,
+            sample_action,
+            rng,
+            action_space,
+            hidden_sizes=(256, 256),
+            activation=jax.nn.relu
+    ):
         super().__init__()
 
-        obs_dim = observation_space.shape[0]
         act_dim = action_space.shape[0]
         act_limit = action_space.high[0]
 
         # build policy and value functions
-        self.pi = MLPActor(obs_dim, act_dim, hidden_sizes, activation, act_limit)
-        self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
-        self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+        self.pi, self.pi_params = self._init_hk_transform(
+            MLPActor,
+            (act_dim, hidden_sizes, act_limit),
+            (sample_state,),
+            rng
+        )
+        self.q1, self.q1_params = self._init_hk_transform(
+            MLPQFunction,
+            (hidden_sizes, activation),
+            (sample_state, sample_action),
+            rng
+        )
+        self.q2, self.q2_params = self._init_hk_transform(
+            MLPQFunction,
+            (hidden_sizes, activation),
+            (sample_state, sample_action),
+            rng
+        )
 
-    def act(self, obs):
-        with torch.no_grad():
-            return self.pi(obs).numpy()
+    def _init_hk_transform(self, module: type, args: tuple, sample_input: tuple, rng: jnp.ndarray) -> tuple[hk.Transformed, hk.Params]:
+        transform = hk.transform(lambda x: module(*args)(*x if type(x) == tuple else x))
+        params = transform.init(rng, sample_input)
+        return transform, params
+
+    def __call__(self, obs):
+        return self.pi.apply(obs)

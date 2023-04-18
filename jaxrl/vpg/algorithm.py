@@ -1,13 +1,11 @@
-import functools
-
 import optax
 import numpy as np
 import jax
 from optax import adam
 import gym
 import time
-import core
-from logx import EpochLogger
+import jaxrl.vpg.core as core
+from jaxrl.utils.logx import EpochLogger
 
 # class needs to use raw numpy to avoid copying a table of immutable JNP arrays
 class VPGBuffer:

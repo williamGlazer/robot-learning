@@ -7,15 +7,10 @@ Logs to a tab-separated-values file (path/to/output_directory/progress.txt)
 """
 import json
 import joblib
-import shutil
-# import numpy as np
 from jax import numpy as jnp
-# import tensorflow as tf
-# import torch
 import os.path as osp, time, atexit, os
 import warnings
-from mpi_tools import mpi_statistics_scalar
-from serialization_utils import convert_json
+from jaxrl.utils.serialization_utils import convert_json
 
 color2num = dict(
     gray=30,
@@ -28,6 +23,34 @@ color2num = dict(
     white=37,
     crimson=38
 )
+
+def mpi_statistics_scalar(x, with_min_and_max=False):
+    """
+    Get mean/std and optional min/max of scalar x across MPI processes.
+
+    Args:
+        x: An array containing samples of the scalar to produce statistics
+            for.
+
+        with_min_and_max (bool): If true, return min and max of x in
+            addition to mean and std.
+    """
+    x = jnp.array(x, dtype=jnp.float32)
+    # global_sum, global_n = mpi_sum([np.sum(x), len(x)])
+    # mean = global_sum / global_n
+    mean = jnp.mean(x)
+
+    # global_sum_sq = mpi_sum(np.sum((x - mean)**2))
+    # std = np.sqrt(global_sum_sq / global_n)  # compute global std
+    std = jnp.std(x)
+
+    if with_min_and_max:
+        # global_min = mpi_op(np.min(x) if len(x) > 0 else np.inf, op=MPI.MIN)
+        # global_max = mpi_op(np.max(x) if len(x) > 0 else -np.inf, op=MPI.MAX)
+        global_min = jnp.min(x) if len(x) > 0 else jnp.inf
+        global_max = jnp.max(x) if len(x) > 0 else -jnp.inf
+        return mean, std, global_min, global_max
+    return mean, std
 
 def colorize(string, color, bold=False, highlight=False):
     """
@@ -218,13 +241,13 @@ class Logger:
 
         Args:
             what_to_save: Any PyTorch model or serializable object containing
-                PyTorch models.
+                PyTorch jaxrl.
         """
         self.pytorch_saver_elements = what_to_save
 
     def _pytorch_simple_save(self, itr=None):
         """
-        Saves the PyTorch model (or models).
+        Saves the PyTorch model (or jaxrl).
         """
         if True: #proc_id()==0:
             assert hasattr(self, 'pytorch_saver_elements'), \
@@ -236,7 +259,7 @@ class Logger:
             os.makedirs(fpath, exist_ok=True)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                # We are using a non-recommended way of saving PyTorch models,
+                # We are using a non-recommended way of saving PyTorch jaxrl,
                 # by pickling whole objects (which are dependent on the exact
                 # directory structure at the time of saving) as opposed to
                 # just saving network weights. This works sufficiently well

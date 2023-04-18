@@ -1,12 +1,14 @@
-from copy import deepcopy
-import itertools
+import jax
+import jax.numpy as jnp
 import numpy as np
-import torch
-from torch.optim import Adam
 import gym
 import time
-import spinup.algos.pytorch.td3.core as core
-from spinup.utils.logx import EpochLogger
+
+import optax
+import haiku as hk
+
+import jaxrl.td3.core as core
+from jaxrl.utils.logx import EpochLogger
 
 
 class ReplayBuffer:
@@ -38,7 +40,7 @@ class ReplayBuffer:
                      act=self.act_buf[idxs],
                      rew=self.rew_buf[idxs],
                      done=self.done_buf[idxs])
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in batch.items()}
+        return batch
 
 
 def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
@@ -148,8 +150,9 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    # TODO
+    # torch.manual_seed(seed)
+    # np.random.seed(seed)
 
     env, test_env = env_fn(), env_fn()
     obs_dim = env.observation_space.shape
@@ -160,44 +163,48 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Create actor-critic module and target networks
     ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-    ac_targ = deepcopy(ac)
-
-    # Freeze target networks with respect to optimizers (only update via polyak averaging)
-    for p in ac_targ.parameters():
-        p.requires_grad = False
-
-    # List of parameters for both Q-networks (save this for convenience)
-    q_params = itertools.chain(ac.q1.parameters(), ac.q2.parameters())
+    ac_targ = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
 
     # Experience buffer
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
 
     # Count variables (protip: try to get a feel for how different size networks behave!)
-    var_counts = tuple(core.count_vars(module) for module in [ac.pi, ac.q1, ac.q2])
+    var_counts = tuple(core.count_vars(module) for module in [ac.pi_params, ac.q1_params, ac.q2_params])
     logger.log('\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
     # Set up function for computing TD3 Q-losses
-    def compute_loss_q(data):
+    def compute_loss_q(
+            q1_params: hk.Params,
+            q2_params: hk.Params,
+            tgt_pi_params: hk.params,
+            tgt_q1_params: hk.Params,
+            tgt_q2_params: hk.Params,
+            rng: jnp.ndarray,
+            data: dict
+    ):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
+        _, q1_rng, q2_rng, pi_tgt_rng, q1_tgt_rng, q2_tgt_rng = jax.random.split(rng, num=6)
 
-        q1 = ac.q1(o, a)
-        q2 = ac.q2(o, a)
+        q1 = ac.q1.apply(q1_params, (o, a), q1_rng)
+        q2 = ac.q2.apply(q2_params, (o, a), q2_rng)
 
         # Bellman backup for Q functions
-        with torch.no_grad():
-            pi_targ = ac_targ.pi(o2)
+        pi_targ = ac_targ.pi.apply(tgt_pi_params, (o2,), pi_tgt_rng)
 
-            # Target policy smoothing
-            epsilon = torch.randn_like(pi_targ) * target_noise
-            epsilon = torch.clamp(epsilon, -noise_clip, noise_clip)
-            a2 = pi_targ + epsilon
-            a2 = torch.clamp(a2, -act_limit, act_limit)
+        # Target policy smoothing
+        epsilon = jax.randn_like(pi_targ) * target_noise
+        epsilon = jax.clamp(epsilon, -noise_clip, noise_clip)
+        a2 = pi_targ + epsilon
+        a2 = jax.clamp(a2, -act_limit, act_limit)
 
-            # Target Q-values
-            q1_pi_targ = ac_targ.q1(o2, a2)
-            q2_pi_targ = ac_targ.q2(o2, a2)
-            q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
-            backup = r + gamma * (1 - d) * q_pi_targ
+        # Target Q-values
+        q1_pi_targ = ac_targ.q1.apply(tgt_q1_params, (o2, a2))
+        q2_pi_targ = ac_targ.q2.apply(tgt_q2_params, (o2, a2))
+        q_pi_targ = jax.min(q1_pi_targ, q2_pi_targ)
+        backup = r + gamma * (1 - d) * q_pi_targ
+
+        # avoid backprop through backup  (replaces `with torch.no_grad`)
+        backup = jax.lax.stop_gradient(backup)
 
         # MSE loss against Bellman backup
         loss_q1 = ((q1 - backup) ** 2).mean()
@@ -205,23 +212,29 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         loss_q = loss_q1 + loss_q2
 
         # Useful info for logging
-        loss_info = dict(Q1Vals=q1.detach().numpy(),
-                         Q2Vals=q2.detach().numpy())
+        loss_info = dict(Q1Vals=q1,
+                         Q2Vals=q2)
 
         return loss_q, loss_info
 
     # Set up function for computing TD3 pi loss
-    def compute_loss_pi(data):
+    def compute_loss_pi(pi_params: hk.Params, q1_params: hk.Params, data, rng):
         o = data['obs']
-        q1_pi = ac.q1(o, ac.pi(o))
+        a = ac.pi.apply(pi_params, o, rng)
+        q1_pi = ac.q1(q1_params, (o, a), rng)
         return -q1_pi.mean()
 
     # Set up optimizers for policy and q-function
-    pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
-    q_optimizer = Adam(q_params, lr=q_lr)
+    pi_optimizer = optax.adam(pi_lr)
+    pi_opt_state = pi_optimizer.init(ac.pi_params)
+
+    q1_optimizer = optax.adam(q_lr)
+    q1_opt_state = pi_optimizer.init(ac.q1_params)
+    q2_optimizer = optax.adam(q_lr)
+    q2_opt_state = pi_optimizer.init(ac.q2_params)
 
     # Set up model saving
-    logger.setup_pytorch_saver(ac)
+    # logger.setup_pytorch_saver(ac)
 
     def update(data, timer):
         # First run one gradient descent step for Q1 and Q2
@@ -360,7 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, default='td3')
     args = parser.parse_args()
 
-    from spinup.utils.run_utils import setup_logger_kwargs
+    from jaxrl.utils.run_utils import setup_logger_kwargs
 
     logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 

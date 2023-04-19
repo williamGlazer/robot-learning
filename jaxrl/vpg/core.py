@@ -32,9 +32,7 @@ def discount_cumsum(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-
 class Actor(hk.Module):
-
     def _distribution(self, obs):
         raise NotImplementedError
 
@@ -43,10 +41,11 @@ class Actor(hk.Module):
 
 
 class MLPCategoricalActor(Actor):
-    
     def __init__(self, act_dim, hidden_sizes, activation):
         super().__init__()
-        self.logits_net = hk.nets.MLP(list(hidden_sizes) + [act_dim], activation=activation)
+        self.logits_net = hk.nets.MLP(
+            list(hidden_sizes) + [act_dim], activation=activation
+        )
         raise NotImplementedError("Not properly tested since didn't know if required")
 
     def _distribution(self, obs):
@@ -55,7 +54,6 @@ class MLPCategoricalActor(Actor):
 
 
 class MLPGaussianActor(Actor):
-
     def __init__(self, act_dim, hidden_sizes, activation):
         super().__init__()
         self.act_dim = act_dim
@@ -63,13 +61,14 @@ class MLPGaussianActor(Actor):
 
     def _distribution(self, obs):
         mu = self.mu_net(obs)
-        log_std = hk.get_parameter("log_std", [self.act_dim], init=hk.initializers.Constant(-0.5))
+        log_std = hk.get_parameter(
+            "log_std", [self.act_dim], init=hk.initializers.Constant(-0.5)
+        )
         std = jnp.exp(log_std)
         return MultivariateNormalDiag(mu, std)
 
 
 class MLPCritic(hk.Module):
-
     def __init__(self, hidden_sizes, activation):
         super().__init__()
         self.v_net = hk.nets.MLP(list(hidden_sizes) + [1], activation=activation)
@@ -79,24 +78,27 @@ class MLPCritic(hk.Module):
 
 
 class MLPActorCritic:
-
     def __init__(
-            self,
-            action_space,
-            rng: jnp.ndarray,
-            sample_state: jnp.ndarray,
-            hidden_sizes=(64, 64),
-            activation=jax.nn.tanh,
+        self,
+        action_space,
+        rng: jnp.ndarray,
+        sample_state: jnp.ndarray,
+        hidden_sizes=(64, 64),
+        activation=jax.nn.tanh,
     ):
         self.action_space = action_space
-        (act_dim, ) = action_space.shape   # unpack tuple dimension
+        (act_dim,) = action_space.shape  # unpack tuple dimension
         actor_rng, critic_rng = jax.random.split(rng)
 
         # policy builder depends on action space
         if isinstance(action_space, Box):
-            self.pi = hk.transform(lambda x: MLPGaussianActor(act_dim, hidden_sizes, activation)(x))
+            self.pi = hk.transform(
+                lambda x: MLPGaussianActor(act_dim, hidden_sizes, activation)(x)
+            )
         elif isinstance(action_space, Discrete):
-            self.pi = hk.transform(lambda x: MLPCategoricalActor(act_dim, hidden_sizes, activation)(x))
+            self.pi = hk.transform(
+                lambda x: MLPCategoricalActor(act_dim, hidden_sizes, activation)(x)
+            )
         self.pi_params = self.pi.init(actor_rng, sample_state)
 
         # build value function

@@ -37,7 +37,7 @@ clean:
 
 ## Lint using black
 lint:
-	black src
+	black jaxrl
 
 ## Set up python interpreter environment
 create_environment:

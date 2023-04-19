@@ -19,10 +19,17 @@ def count_vars(params):
 
 
 class MLPActor(hk.Module):
-
-    def __init__(self, act_dim: int, hidden_sizes: list[int], activation: callable, act_limit: float):
+    def __init__(
+        self,
+        act_dim: int,
+        hidden_sizes: list[int],
+        activation: callable,
+        act_limit: float,
+    ):
         super().__init__()
-        self.pi = hk.nets.MLP(output_sizes=list(hidden_sizes) + [act_dim], activation=activation)
+        self.pi = hk.nets.MLP(
+            output_sizes=list(hidden_sizes) + [act_dim], activation=activation
+        )
         self.act_limit = act_limit
 
     def __call__(self, obs: jnp.ndarray) -> jnp.ndarray:
@@ -31,10 +38,11 @@ class MLPActor(hk.Module):
 
 
 class MLPQFunction(hk.Module):
-
     def __init__(self, hidden_sizes: list[int], activation: callable):
         super().__init__()
-        self.q = hk.nets.MLP(output_sizes=list(hidden_sizes) + [1], activation=activation)
+        self.q = hk.nets.MLP(
+            output_sizes=list(hidden_sizes) + [1], activation=activation
+        )
 
     def __call__(self, obs: jnp.array, act: jnp.array) -> jnp.array:
         q = self.q(jnp.concatenate([obs, act], axis=-1))
@@ -48,15 +56,14 @@ class ACParams(NamedTuple):
 
 
 class MLPActorCritic:
-
     def __init__(
-            self,
-            sample_state: jnp.ndarray,
-            sample_action: jnp.ndarray,
-            rng: jnp.ndarray,
-            action_space: Box,
-            hidden_sizes=(256, 256),
-            activation=jax.nn.tanh
+        self,
+        sample_state: jnp.ndarray,
+        sample_action: jnp.ndarray,
+        rng: jnp.ndarray,
+        action_space: Box,
+        hidden_sizes=(256, 256),
+        activation=jax.nn.tanh,
     ):
         super().__init__()
 
@@ -67,21 +74,33 @@ class MLPActorCritic:
 
         # build policy and value functions
         self.pi, pi_params = self._init_hk_transform(
-            module=MLPActor, args=(act_dim, hidden_sizes, activation, act_limit),
-            sample_input=sample_state, rng=rng
+            module=MLPActor,
+            args=(act_dim, hidden_sizes, activation, act_limit),
+            sample_input=sample_state,
+            rng=rng,
         )
         self.q1, q1_params = self._init_hk_transform(
-            module=MLPQFunction, args=(hidden_sizes, activation),
-            sample_input=(sample_state, sample_action), rng=q1_rng
+            module=MLPQFunction,
+            args=(hidden_sizes, activation),
+            sample_input=(sample_state, sample_action),
+            rng=q1_rng,
         )
         self.q2, q2_params = self._init_hk_transform(
-            module=MLPQFunction, args=(hidden_sizes, activation),
-            sample_input=(sample_state, sample_action), rng=q2_rng
+            module=MLPQFunction,
+            args=(hidden_sizes, activation),
+            sample_input=(sample_state, sample_action),
+            rng=q2_rng,
         )
 
         self.params = ACParams(pi=pi_params, q1=q1_params, q2=q2_params)
 
-    def _init_hk_transform(self, module: type, args: tuple, sample_input: tuple[jnp.ndarray, jnp.ndarray] | jnp.ndarray, rng: jnp.ndarray) -> tuple[hk.Transformed, hk.Params]:
+    def _init_hk_transform(
+        self,
+        module: type,
+        args: tuple,
+        sample_input: tuple[jnp.ndarray, jnp.ndarray] | jnp.ndarray,
+        rng: jnp.ndarray,
+    ) -> tuple[hk.Transformed, hk.Params]:
         if type(sample_input) == tuple:
             transform = hk.transform(lambda obs, act: module(*args)(obs, act))
             params = transform.init(rng, *sample_input)

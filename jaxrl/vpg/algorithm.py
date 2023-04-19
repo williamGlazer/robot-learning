@@ -7,6 +7,7 @@ import time
 import core
 from jaxrl.utils.logx import EpochLogger
 
+
 # class needs to use raw numpy to avoid copying a table of immutable JNP arrays
 class VPGBuffer:
     """
@@ -75,17 +76,37 @@ class VPGBuffer:
         """
         self.ptr, self.path_start_idx = 0, 0
         # the next two lines implement the advantage normalization trick
-        adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf) if (self.adv_buf != 0).any() else 1.0
+        adv_mean, adv_std = (
+            np.mean(self.adv_buf),
+            np.std(self.adv_buf) if (self.adv_buf != 0).any() else 1.0,
+        )
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
-                    adv=self.adv_buf, logp=self.logp_buf)
+        data = dict(
+            obs=self.obs_buf,
+            act=self.act_buf,
+            ret=self.ret_buf,
+            adv=self.adv_buf,
+            logp=self.logp_buf,
+        )
         return data
 
 
-def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
-        steps_per_epoch=4000, epochs=50, gamma=0.99, pi_lr=3e-4,
-        vf_lr=1e-3, train_v_iters=80, lam=0.97, max_ep_len=1000,
-        logger_kwargs=dict(), save_freq=10):
+def vpg(
+    env_fn,
+    actor_critic=core.MLPActorCritic,
+    ac_kwargs=dict(),
+    seed=0,
+    steps_per_epoch=4000,
+    epochs=50,
+    gamma=0.99,
+    pi_lr=3e-4,
+    vf_lr=1e-3,
+    train_v_iters=80,
+    lam=0.97,
+    max_ep_len=1000,
+    logger_kwargs=dict(),
+    save_freq=10,
+):
     """
     Vanilla Policy Gradient
 
@@ -188,11 +209,13 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Create actor-critic module
     key, ac_rng = jax.random.split(key)
     sample_state, _ = env.reset()
-    ac = actor_critic(env.action_space, ac_rng, sample_state,  **ac_kwargs)
+    ac = actor_critic(env.action_space, ac_rng, sample_state, **ac_kwargs)
 
     # Count variables
-    var_counts = sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.pi_params))), sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.v_params)))
-    logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n' % var_counts)
+    var_counts = sum(
+        jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.pi_params))
+    ), sum(jax.tree_leaves(jax.tree_map(lambda x: x.size, ac.v_params)))
+    logger.log("\nNumber of parameters: \t pi: %d, \t v: %d\n" % var_counts)
 
     # Set up experience buffer
     buf = VPGBuffer(obs_dim, act_dim, steps_per_epoch, gamma, lam)
@@ -200,7 +223,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Set up function for computing VPG policy loss
     @jax.jit
     def compute_loss_pi(pi_params, data, rng):
-        obs, act, adv, logp_old = data['obs'], data['act'], data['adv'], data['logp']
+        obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
 
         # Policy loss
         pi = ac.pi.apply(pi_params, x=obs, rng=rng)
@@ -217,7 +240,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Set up function for computing value loss
     @jax.jit
     def compute_loss_v(v_params, data, rng):
-        obs, ret = data['obs'], data['ret']
+        obs, ret = data["obs"], data["ret"]
         return ((ac.v.apply(v_params, x=obs, rng=rng) - ret) ** 2).mean()
 
     # Set up optimizers for policy and value function
@@ -232,40 +255,53 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     @jax.jit
     def update_pi(pi_opt_state, pi_params, data, rng):
         # Train policy with a single step of gradient descent
-        (loss_pi, pi_info), pi_gradient = jax.value_and_grad(compute_loss_pi, has_aux=True)(pi_params, data, rng)
-        pi_updates, pi_opt_state = pi_optimizer.update(updates=pi_gradient, state=pi_opt_state, params=pi_params)
+        (loss_pi, pi_info), pi_gradient = jax.value_and_grad(
+            compute_loss_pi, has_aux=True
+        )(pi_params, data, rng)
+        pi_updates, pi_opt_state = pi_optimizer.update(
+            updates=pi_gradient, state=pi_opt_state, params=pi_params
+        )
         pi_new_params = optax.apply_updates(params=pi_params, updates=pi_updates)
         return pi_opt_state, pi_new_params, loss_pi, pi_info
 
     @jax.jit
     def update_vf(vf_opt_state, v_params, data, rng):
         loss_v, v_gradient = jax.value_and_grad(compute_loss_v)(v_params, data, rng)
-        vf_updates, vf_opt_state = vf_optimizer.update(updates=v_gradient, state=vf_opt_state, params=v_params)
+        vf_updates, vf_opt_state = vf_optimizer.update(
+            updates=v_gradient, state=vf_opt_state, params=v_params
+        )
         vf_new_params = optax.apply_updates(params=v_params, updates=vf_updates)
         return vf_opt_state, vf_new_params, loss_v
 
     def update(pi_opt_state, vf_opt_state, step_rng, warmup=False):
         data = buf.get()
 
-        pi_opt_state, pi_params, loss_pi, pi_info = update_pi(pi_opt_state, ac.pi_params, data, step_rng)
+        pi_opt_state, pi_params, loss_pi, pi_info = update_pi(
+            pi_opt_state, ac.pi_params, data, step_rng
+        )
         if not warmup:
             ac.pi_params = pi_params
         old_loss_pi, _ = compute_loss_pi(ac.pi_params, data, step_rng)
 
         # Value function learning
         for i in range(train_v_iters):
-            vf_opt_state, vf_params, loss_v = update_vf(vf_opt_state, ac.v_params, data, step_rng)
+            vf_opt_state, vf_params, loss_v = update_vf(
+                vf_opt_state, ac.v_params, data, step_rng
+            )
             if not warmup:
                 ac.v_params = vf_params
             if i == 0:
                 first_loss_v = loss_v
 
         # Log changes from update
-        kl, ent = pi_info['kl'], pi_info['ent']
-        logger.store(LossPi=loss_pi, LossV=first_loss_v,
-                     KL=kl, Entropy=ent,
-                     DeltaLossPi=old_loss_pi - loss_pi,
-                     DeltaLossV=loss_v - first_loss_v
+        kl, ent = pi_info["kl"], pi_info["ent"]
+        logger.store(
+            LossPi=loss_pi,
+            LossV=first_loss_v,
+            KL=kl,
+            Entropy=ent,
+            DeltaLossPi=old_loss_pi - loss_pi,
+            DeltaLossV=loss_v - first_loss_v,
         )
 
         return pi_opt_state, vf_opt_state
@@ -301,7 +337,10 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
             if terminal or epoch_ended:
                 if epoch_ended and not (terminal):
-                    print('Warning: trajectory cut off by epoch at %d steps.' % ep_len, flush=True)
+                    print(
+                        "Warning: trajectory cut off by epoch at %d steps." % ep_len,
+                        flush=True,
+                    )
                 # if trajectory didn't reach terminal state, bootstrap value target
                 if timeout or epoch_ended:
                     _, v, _ = ac.forward(ac.pi_params, ac.v_params, o, step_rng)
@@ -315,46 +354,54 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs - 1):
-            logger.save_state({'env': env}, None)
+            logger.save_state({"env": env}, None)
 
         # Perform VPG update!
         pi_opt_state, vf_opt_state = update(pi_opt_state, vf_opt_state, step_rng)
 
         # Log info about epoch
-        logger.log_tabular('Epoch', epoch)
-        logger.log_tabular('EpRet', with_min_and_max=True)
-        logger.log_tabular('EpLen', average_only=True)
-        logger.log_tabular('VVals', with_min_and_max=True)
-        logger.log_tabular('TotalEnvInteracts', (epoch + 1) * steps_per_epoch)
-        logger.log_tabular('LossPi', average_only=True)
-        logger.log_tabular('LossV', average_only=True)
-        logger.log_tabular('DeltaLossPi', average_only=True)
-        logger.log_tabular('DeltaLossV', average_only=True)
-        logger.log_tabular('Entropy', average_only=True)
-        logger.log_tabular('KL', average_only=True)
-        logger.log_tabular('Time', time.time() - start_time)
+        logger.log_tabular("Epoch", epoch)
+        logger.log_tabular("EpRet", with_min_and_max=True)
+        logger.log_tabular("EpLen", average_only=True)
+        logger.log_tabular("VVals", with_min_and_max=True)
+        logger.log_tabular("TotalEnvInteracts", (epoch + 1) * steps_per_epoch)
+        logger.log_tabular("LossPi", average_only=True)
+        logger.log_tabular("LossV", average_only=True)
+        logger.log_tabular("DeltaLossPi", average_only=True)
+        logger.log_tabular("DeltaLossV", average_only=True)
+        logger.log_tabular("Entropy", average_only=True)
+        logger.log_tabular("KL", average_only=True)
+        logger.log_tabular("Time", time.time() - start_time)
         logger.dump_tabular()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
-    parser.add_argument('--hid', type=int, default=64)
-    parser.add_argument('--l', type=int, default=2)
-    parser.add_argument('--gamma', type=float, default=0.99)
-    parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--steps', type=int, default=5000)
-    parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--exp_name', type=str, default='vpg')
+    parser.add_argument("--env", type=str, default="HalfCheetah-v2")
+    parser.add_argument("--hid", type=int, default=64)
+    parser.add_argument("--l", type=int, default=2)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--seed", "-s", type=int, default=0)
+    parser.add_argument("--steps", type=int, default=5000)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--exp_name", type=str, default="vpg")
     args = parser.parse_args()
 
     from jaxrl.utils.run_utils import setup_logger_kwargs
 
-    logger_kwargs = setup_logger_kwargs(args.exp_name, seed=args.seed, data_dir='../../data')
+    logger_kwargs = setup_logger_kwargs(
+        args.exp_name, seed=args.seed, data_dir="../../data"
+    )
 
-    vpg(lambda: gym.make(args.env), actor_critic=core.MLPActorCritic,
-        ac_kwargs=dict(hidden_sizes=(128, 64), activation=jax.nn.tanh), gamma=args.gamma,
-        seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
-        logger_kwargs=logger_kwargs)
+    vpg(
+        lambda: gym.make(args.env),
+        actor_critic=core.MLPActorCritic,
+        ac_kwargs=dict(hidden_sizes=(128, 64), activation=jax.nn.tanh),
+        gamma=args.gamma,
+        seed=args.seed,
+        steps_per_epoch=args.steps,
+        epochs=args.epochs,
+        logger_kwargs=logger_kwargs,
+    )

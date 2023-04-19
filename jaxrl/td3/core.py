@@ -19,15 +19,15 @@ def count_vars(params):
 
 class MLPActor(hk.Module):
 
-    def __init__(self, act_dim, hidden_sizes, act_limit):
+    def __init__(self, act_dim, hidden_sizes, activation, act_limit):
         super().__init__()
         pi_sizes = list(hidden_sizes) + [act_dim]
-        self.pi = hk.nets.MLP(pi_sizes, activation=jax.nn.tanh)
+        self.pi = hk.nets.MLP(pi_sizes, activation=activation)
         self.act_limit = act_limit
 
     def __call__(self, obs):
         # Return output from network scaled to action space limits.
-        return self.act_limit * self.pi(obs)
+        return self.act_limit * jax.nn.tanh(self.pi(obs))
 
 class MLPQFunction(hk.Module):
 
@@ -58,13 +58,15 @@ class MLPActorCritic:
     ):
         super().__init__()
 
+        rng, q1_rng, q2_rng = jax.random.split(rng, num=3)
+
         act_dim = action_space.shape[0]
         act_limit = action_space.high[0]
 
         # build policy and value functions
         self.pi, pi_params = self._init_hk_transform(
             MLPActor,
-            (act_dim, hidden_sizes, act_limit),
+            (act_dim, hidden_sizes, activation, act_limit),
             (sample_state,),
             rng
         )
@@ -72,13 +74,13 @@ class MLPActorCritic:
             MLPQFunction,
             (hidden_sizes, activation),
             (sample_state, sample_action),
-            rng
+            q1_rng
         )
         self.q2, q2_params = self._init_hk_transform(
             MLPQFunction,
             (hidden_sizes, activation),
             (sample_state, sample_action),
-            rng
+            q2_rng
         )
         self.params = ACParams(pi=pi_params, q1=q1_params, q2=q2_params)
 

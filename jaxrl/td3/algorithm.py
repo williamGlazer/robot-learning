@@ -178,11 +178,6 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     var_counts = tuple(core.count_vars(module) for module in ac.params)
     logger.log('\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
-    class TrainState(NamedTuple):
-        actor_critic: core.ACParams
-        actor_critic_target: core.ACParams
-        optimizer: core.ACParams
-
     # Set up function for computing TD3 Q-losses
     @jax.jit
     def compute_loss_q(
@@ -193,15 +188,14 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             rng: jnp.ndarray,
     ):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
-        _, q1_rng, q2_rng, pi_tgt_rng, q1_tgt_rng, q2_tgt_rng = jax.random.split(rng, num=6)
-        # TODO clean rng
+        _, pi_rng, q1_rng, q2_rng = jax.random.split(rng, num=4)
 
         # use function input for differentiation
         q1 = ac.q1.apply(q1_params, q1_rng, (o, a))
         q2 = ac.q2.apply(q2_params, q2_rng, (o, a))
 
         # Bellman backup for Q functions
-        pi_targ = ac_tgt.pi.apply(ac_tgt_params.pi, pi_tgt_rng, (o2,), )
+        pi_targ = ac_tgt.pi.apply(ac_tgt_params.pi, pi_rng, (o2,))
 
         # Target policy smoothing
         epsilon = jax.random.uniform(q1_rng, pi_targ.shape) * target_noise
@@ -210,8 +204,8 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         a2 = jax.lax.clamp(-act_limit, a2, act_limit)
 
         # Target Q-values
-        q1_pi_targ = ac_tgt.q1.apply(ac_tgt_params.q1, pi_tgt_rng, (o2, a2))
-        q2_pi_targ = ac_tgt.q2.apply(ac_tgt_params.q2, pi_tgt_rng, (o2, a2))
+        q1_pi_targ = ac_tgt.q1.apply(ac_tgt_params.q1, q1_rng, (o2, a2))
+        q2_pi_targ = ac_tgt.q2.apply(ac_tgt_params.q2, q2_rng, (o2, a2))
         q_pi_targ = jnp.minimum(q1_pi_targ, q2_pi_targ)
         backup = r + gamma * (1 - d) * q_pi_targ
 
@@ -263,15 +257,14 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # Train policy with a single step of gradient descent
         (loss, loss_info), (q1_grad, q2_grad) = jax.value_and_grad(compute_loss_q, argnums=(0, 1), has_aux=True)(ac_params.q1, ac_params.q2, ac_tgt_params, data, rng)
 
-        q1_updates, q1_new_opt_state = pi_optimizer.update(updates=q1_grad, state=optimizer_params.q1, params=ac_params.q1)
+        q1_updates, q1_new_opt_state = q1_optimizer.update(updates=q1_grad, state=optimizer_params.q1, params=ac_params.q1)
         q1_new_params = optax.apply_updates(params=ac_params.q1, updates=q1_updates)
 
-        q2_updates, q2_new_opt_state = pi_optimizer.update(updates=q2_grad, state=optimizer_params.q2, params=ac_params.q2)
+        q2_updates, q2_new_opt_state = q2_optimizer.update(updates=q2_grad, state=optimizer_params.q2, params=ac_params.q2)
         q2_new_params = optax.apply_updates(params=ac_params.q2, updates=q2_updates)
 
         return q1_new_opt_state, q2_new_opt_state, q1_new_params, q2_new_params, loss, loss_info
 
-    # TODO jax
     def update(optimizer_params, data, timer, rng):
         # First run one gradient descent step for Q1 and Q2
         op_state_q1, op_state_q2, ac_params_q1, ac_params_q2, loss_q, loss_info = update_q(optimizer_params, ac.params, ac_tgt.params, data, rng)
@@ -406,7 +399,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, default='HalfCheetah-v2')
     parser.add_argument('--hid', type=int, default=256)
-    parser.add_argument('--l', type=int, default=2)
+    parser.add_argument('--l', type=int, default=3)
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--epochs', type=int, default=50)

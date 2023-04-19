@@ -286,6 +286,7 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             # Next run one gradient descent step for pi.
             opt_state_pi, ac_params_pi, loss_pi = update_pi(opt_params=optimizer_params, ac_params=ac.params, data=data, rng=rng)
             optimizer_params = core.ACParams(pi=opt_state_pi, q1=optimizer_params.q1, q2=optimizer_params.q2)
+            ac.set_params(pi=ac_params_pi, q1=ac.params.q1, q2=ac.params.q2)
 
             # Record things
             logger.store(LossPi=loss_pi)

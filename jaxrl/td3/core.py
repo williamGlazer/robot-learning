@@ -56,7 +56,7 @@ class MLPActorCritic:
             rng: jnp.ndarray,
             action_space: Box,
             hidden_sizes=(256, 256),
-            activation=jax.nn.relu
+            activation=jax.nn.tanh
     ):
         super().__init__()
 

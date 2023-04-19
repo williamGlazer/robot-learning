@@ -1,4 +1,5 @@
 import functools
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -35,8 +36,14 @@ class MLPQFunction(hk.Module):
         self.q = hk.nets.MLP(list(hidden_sizes) + [1], activation=activation)
 
     def __call__(self, obs, act):
-        q = self.q(jnp.concatenate([obs, act], dim=-1))
+        q = self.q(jnp.concatenate([obs, act], axis=-1))
         return jnp.squeeze(q, -1)  # Critical to ensure q has right shape.
+
+
+class ACParams(NamedTuple):
+    pi: hk.Params
+    q1: hk.Params
+    q2: hk.Params
 
 class MLPActorCritic:
 
@@ -55,33 +62,37 @@ class MLPActorCritic:
         act_limit = action_space.high[0]
 
         # build policy and value functions
-        self.pi, self.pi_params = self._init_hk_transform(
+        self.pi, pi_params = self._init_hk_transform(
             MLPActor,
             (act_dim, hidden_sizes, act_limit),
             (sample_state,),
             rng
         )
-        self.q1, self.q1_params = self._init_hk_transform(
+        self.q1, q1_params = self._init_hk_transform(
             MLPQFunction,
             (hidden_sizes, activation),
             (sample_state, sample_action),
             rng
         )
-        self.q2, self.q2_params = self._init_hk_transform(
+        self.q2, q2_params = self._init_hk_transform(
             MLPQFunction,
             (hidden_sizes, activation),
             (sample_state, sample_action),
             rng
         )
+        self.params = ACParams(pi=pi_params, q1=q1_params, q2=q2_params)
 
     def _init_hk_transform(self, module: type, args: tuple, sample_input: tuple, rng: jnp.ndarray) -> tuple[hk.Transformed, hk.Params]:
-        transform = hk.transform(lambda x: module(*args)(*x if type(x) == tuple else x))
+        transform = hk.transform(lambda x: module(*args)(*x))
         params = transform.init(rng, sample_input)
         return transform, params
 
     @functools.partial(jax.jit, static_argnums=0)
-    def __call__(self, pi_params, obs, rng):
-        return self.pi.apply(pi_params, obs, rng)
+    def __call__(self, pi_params, rng, obs):
+        return self.pi.apply(pi_params, rng, obs)
 
     def act(self, obs, rng):
-        return self(self.pi_params, obs, rng)
+        return self(self.params.pi, rng, (obs,))
+
+    def set_params(self, pi, q1, q2):
+        self.params = ACParams(pi, q1, q2)

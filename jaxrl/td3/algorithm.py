@@ -167,8 +167,14 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     act_limit = env.action_space.high[0]
 
     # Create actor-critic module and target networks
-    (sample_state, _), sample_action = env.reset(), jnp.zeros(shape=act_dim)
-    ac = actor_critic(sample_state, sample_action, key, env.action_space, **ac_kwargs)
+    (state, _), action = env.reset(), env.action_space.sample()
+    ac = actor_critic(
+        sample_state=state,
+        sample_action=action,
+        rng=key,
+        action_space=env.action_space,
+        **ac_kwargs
+    )
     ac_tgt = deepcopy(ac)
 
     # Experience buffer
@@ -188,24 +194,24 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             rng: jnp.ndarray,
     ):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
-        _, pi_rng, q1_rng, q2_rng = jax.random.split(rng, num=4)
+        key, pi_rng, q1_rng, q2_rng = jax.random.split(rng, num=4)
 
         # use function input for differentiation
-        q1 = ac.q1.apply(q1_params, q1_rng, (o, a))
-        q2 = ac.q2.apply(q2_params, q2_rng, (o, a))
+        q1 = ac.q1.apply(params=q1_params, rng=q1_rng, obs=o, act=a)
+        q2 = ac.q2.apply(params=q2_params, rng=q2_rng, obs=o, act=a)
 
         # Bellman backup for Q functions
-        pi_targ = ac_tgt.pi.apply(ac_tgt_params.pi, pi_rng, (o2,))
+        pi_targ = ac_tgt.pi.apply(params=ac_tgt_params.pi, rng=pi_rng, obs=o2)
 
         # Target policy smoothing
-        epsilon = jax.random.uniform(q1_rng, pi_targ.shape) * target_noise
-        epsilon = jax.lax.clamp(-noise_clip, epsilon, noise_clip)
+        epsilon = jax.random.uniform(key=q1_rng, shape=pi_targ.shape) * target_noise
+        epsilon = jax.lax.clamp(min=-noise_clip, x=epsilon, max=noise_clip)
         a2 = pi_targ + epsilon
-        a2 = jax.lax.clamp(-act_limit, a2, act_limit)
+        a2 = jax.lax.clamp(min=-act_limit, x=a2, max=act_limit)
 
         # Target Q-values
-        q1_pi_targ = ac_tgt.q1.apply(ac_tgt_params.q1, q1_rng, (o2, a2))
-        q2_pi_targ = ac_tgt.q2.apply(ac_tgt_params.q2, q2_rng, (o2, a2))
+        q1_pi_targ = ac_tgt.q1.apply(params=ac_tgt_params.q1, rng=q1_rng, obs=o2, act=a2)
+        q2_pi_targ = ac_tgt.q2.apply(params=ac_tgt_params.q2, rng=q2_rng, obs=o2, act=a2)
         q_pi_targ = jnp.minimum(q1_pi_targ, q2_pi_targ)
         backup = r + gamma * (1 - d) * q_pi_targ
 
@@ -225,10 +231,10 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Set up function for computing TD3 pi loss
     @jax.jit
-    def compute_loss_pi(pi_params, q1_params, data, rng):
+    def compute_loss_pi(pi_params: hk.Params, q1_params: hk.Params, data: dict, rng: jnp.ndarray):
         o = data['obs']
-        a = ac.pi.apply(pi_params, rng, (o,))
-        q1_pi = ac.q1.apply(q1_params, rng, (o, a))
+        a = ac.pi.apply(params=pi_params, rng=rng, obs=o)
+        q1_pi = ac.q1.apply(params=q1_params, rng=rng, obs=o, act=a)
         return -q1_pi.mean()
 
     # Set up optimizers for policy and q-function
@@ -246,16 +252,16 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # logger.setup_pytorch_saver(ac)
 
     @jax.jit
-    def update_pi(opt_params, ac_params, data, rng):
-        loss_pi, pi_gradient = jax.value_and_grad(compute_loss_pi)(ac_params.pi, ac_params.q1, data, rng)
+    def update_pi(opt_params: core.ACParams, ac_params: core.ACParams, data: dict, rng: jnp.array):
+        loss_pi, pi_gradient = jax.value_and_grad(fun=compute_loss_pi)(ac_params.pi, q1_params=ac_params.q1, data=data, rng=rng)
         pi_updates, pi_new_opt_state = pi_optimizer.update(updates=pi_gradient, state=opt_params.pi, params=ac_params.pi)
         pi_new_params = optax.apply_updates(params=ac_params.pi, updates=pi_updates)
         return pi_new_opt_state, pi_new_params, loss_pi
 
     @jax.jit
-    def update_q(optimizer_params, ac_params, ac_tgt_params, data, rng):
+    def update_q(optimizer_params: core.ACParams, ac_params: core.ACParams, ac_tgt_params: core.ACParams, data: dict, rng: jnp.ndarray):
         # Train policy with a single step of gradient descent
-        (loss, loss_info), (q1_grad, q2_grad) = jax.value_and_grad(compute_loss_q, argnums=(0, 1), has_aux=True)(ac_params.q1, ac_params.q2, ac_tgt_params, data, rng)
+        (loss, loss_info), (q1_grad, q2_grad) = jax.value_and_grad(fun=compute_loss_q, argnums=(0, 1), has_aux=True)(ac_params.q1, ac_params.q2, ac_tgt_params=ac_tgt_params, data=data, rng=rng)
 
         q1_updates, q1_new_opt_state = q1_optimizer.update(updates=q1_grad, state=optimizer_params.q1, params=ac_params.q1)
         q1_new_params = optax.apply_updates(params=ac_params.q1, updates=q1_updates)
@@ -265,11 +271,11 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
         return q1_new_opt_state, q2_new_opt_state, q1_new_params, q2_new_params, loss, loss_info
 
-    def update(optimizer_params, data, timer, rng):
+    def update(optimizer_params: core.ACParams, data: dict, timer: int, rng: jnp.ndarray):
         # First run one gradient descent step for Q1 and Q2
-        op_state_q1, op_state_q2, ac_params_q1, ac_params_q2, loss_q, loss_info = update_q(optimizer_params, ac.params, ac_tgt.params, data, rng)
-        optimizer_params = core.ACParams(optimizer_params.pi, op_state_q1, op_state_q2)
-        ac.set_params(ac.params.pi, ac_params_q1, ac_params_q2)
+        opt_state_q1, opt_state_q2, ac_params_q1, ac_params_q2, loss_q, loss_info = update_q(optimizer_params=optimizer_params, ac_params=ac.params, ac_tgt_params=ac_tgt.params, data=data, rng=rng)
+        optimizer_params = core.ACParams(pi=optimizer_params.pi, q1=opt_state_q1, q2=opt_state_q2)
+        ac.set_params(pi=ac.params.pi, q1=ac_params_q1, q2=ac_params_q2)
 
         # Record things
         logger.store(LossQ=loss_q, **loss_info)
@@ -277,10 +283,9 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # Possibly update pi and target networks
         if timer % policy_delay == 0:
 
-            # TODO if slow look at disabling gradient of QNets
             # Next run one gradient descent step for pi.
-            opt_state_pi, ac_params_pi, loss_pi = update_pi(optimizer_params, ac.params, data, rng)
-            optimizer_params = core.ACParams(opt_state_pi, optimizer_params.q1, optimizer_params.q2)
+            opt_state_pi, ac_params_pi, loss_pi = update_pi(opt_params=optimizer_params, ac_params=ac.params, data=data, rng=rng)
+            optimizer_params = core.ACParams(pi=opt_state_pi, q1=optimizer_params.q1, q2=optimizer_params.q2)
 
             # Record things
             logger.store(LossPi=loss_pi)
@@ -302,22 +307,22 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 step_size=polyak
             )
 
-            ac_tgt.set_params(params_pi, params_q1, params_q2)
+            ac_tgt.set_params(pi=params_pi, q1=params_q1, q2=params_q2)
 
         return optimizer_params
 
-    def get_action(o, noise_scale, rng):
-        a = ac.act(o, rng)
+    def get_action(o: jnp.ndarray, noise_scale: float, rng: jnp.ndarray):
+        a = ac.act(obs=o, rng=rng)
         a += noise_scale * np.random.randn(act_dim)
-        return np.clip(a, -act_limit, act_limit)
+        return jnp.clip(a=a, a_min=-act_limit, a_max=act_limit)
 
-    def test_agent(key):
+    def test_agent(key: jnp.ndarray):
         for j in range(num_test_episodes):
             (o, _), d, ep_ret, ep_len = test_env.reset(), False, 0, 0
             while not (d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
                 key, step_rng = jax.random.split(key)
-                o, r, d, _, _ = test_env.step(get_action(o, 0, step_rng))
+                o, r, d, _, _ = test_env.step(get_action(o=o, noise_scale=0, rng=step_rng))
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -335,7 +340,7 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # from a uniform distribution for better exploration. Afterwards,
         # use the learned policy (with some noise, via act_noise).
         if t > start_steps:
-            a = get_action(o, act_noise, step_rng)
+            a = get_action(o=o, noise_scale=act_noise, rng=step_rng)
         else:
             a = env.action_space.sample()
 

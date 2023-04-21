@@ -5,8 +5,8 @@ import torch
 from torch.optim import Adam
 import gym
 import time
-import td3_core as core
-from logx import EpochLogger
+import spinnuprl.td3.td3_core as core
+from spinnuprl.utils.logx import EpochLogger
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

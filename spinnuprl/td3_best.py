@@ -1,4 +1,4 @@
-from spinnuprl.td3.td3 import td3
+from spinnuprl.td3.algorithm import td3
 import torch
 import numpy as np
 import gym

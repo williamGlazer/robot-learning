@@ -3,7 +3,7 @@ import torch
 from torch.optim import Adam
 import gym
 import time
-import spinnuprl.vpg.vpg_core as core
+import spinnuprl.vpg.core as core
 from spinnuprl.utils.logx import EpochLogger
 import cProfile
 # from spinup.utils.mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads

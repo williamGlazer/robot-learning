@@ -1,4 +1,4 @@
-from spinnuprl.vpg.vpg import vpg
+from spinnuprl.vpg.algorithm import vpg
 import torch
 import gym
 

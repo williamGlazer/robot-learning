@@ -14,6 +14,9 @@ import haiku as hk
 import jaxrl.td3.core as core
 from jaxrl.utils.logx import EpochLogger
 
+import cProfile
+import os.path as osp
+
 
 class ReplayBuffer:
     """
@@ -407,6 +410,8 @@ def td3(
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
+    profiler = cProfile.Profile()
+    profiler.enable()
     for t in range(total_steps):
         key, step_rng = jax.random.split(key)
 
@@ -470,6 +475,16 @@ def td3(
             logger.log_tabular("LossQ", average_only=True)
             logger.log_tabular("Time", time.time() - start_time)
             logger.dump_tabular()
+
+        profiler.disable()
+
+        prof_idx = 0
+        while True:
+            prof_file = f'prof/jax_td3_{prof_idx}'
+            if not osp.exists(prof_file):
+                break
+            prof_idx += 1
+        profiler.dump_stats(prof_file)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ import gym
 import time
 import core
 from jaxrl.utils.logx import EpochLogger
+import cProfile
+import os.path as osp
 
 
 # class needs to use raw numpy to avoid copying a table of immutable JNP arrays
@@ -314,6 +316,8 @@ def vpg(
     start_time = time.time()
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
+    profiler = cProfile.Profile()
+    profiler.enable()
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(steps_per_epoch):
@@ -373,6 +377,16 @@ def vpg(
         logger.log_tabular("KL", average_only=True)
         logger.log_tabular("Time", time.time() - start_time)
         logger.dump_tabular()
+
+    profiler.disable()
+
+    prof_idx = 0
+    while True:
+        prof_file = f'prof/jax_vpg_{prof_idx}'
+        if not osp.exists(prof_file):
+            break
+        prof_idx += 1
+    profiler.dump_stats(prof_file)
 
 
 if __name__ == "__main__":

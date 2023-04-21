@@ -7,6 +7,8 @@ import gym
 import time
 import spinnuprl.td3.core as core
 from spinnuprl.utils.logx import EpochLogger
+import cProfile
+import os.path as osp
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -285,6 +287,8 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
+    profiler = cProfile.Profile()
+    profiler.enable()
     for t in range(total_steps):
         
         # Until start_steps have elapsed, randomly sample actions
@@ -347,6 +351,16 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             logger.log_tabular('LossQ', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
             logger.dump_tabular()
+
+        profiler.disable()
+
+        prof_idx = 0
+        while True:
+            prof_file = f'prof/gpu_td3_{prof_idx}'
+            if not osp.exists(prof_file):
+                break
+            prof_idx += 1
+        profiler.dump_stats(prof_file)
 
 if __name__ == '__main__':
     import argparse

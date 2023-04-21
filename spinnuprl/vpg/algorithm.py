@@ -6,6 +6,8 @@ import time
 import spinnuprl.vpg.core as core
 from spinnuprl.utils.logx import EpochLogger
 import cProfile
+import os.path as osp
+
 # from spinup.utils.mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
 # from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
 
@@ -224,7 +226,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
         # Policy loss
         pi, logp = ac.pi(obs, act)
-        loss_pi = -(logp.to(device) * adv.to(device) ).mean()
+        loss_pi = -(logp.to(device) * adv.to(device)).mean()
 
         # Useful extra info
         approx_kl = (logp_old.cpu() - logp.cpu()).mean().item()
@@ -338,7 +340,15 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         logger.dump_tabular()
 
     profiler.disable()
-    profiler.dump_stats("prof/vpg_test")
+
+    prof_idx = 0
+    while True:
+        prof_file = f'prof/gpu_vpg_{prof_idx}'
+        if not osp.exists(prof_file):
+            break
+        prof_idx += 1
+    profiler.dump_stats(prof_file)
+
 
 if __name__ == '__main__':
     import argparse

@@ -312,10 +312,6 @@ def vpg(
 
         return pi_opt_state, vf_opt_state
 
-    print("warmup...")
-    update(pi_opt_state, vf_opt_state, key, warmup=True)
-    print("Done")
-
     # Prepare for interaction with environment
     start_time = time.time()
     (o, _), ep_ret, ep_len = env.reset(), 0, 0

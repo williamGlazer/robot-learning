@@ -336,6 +336,8 @@ def td3(
     ):
         def update_q_profiling(**kwargs):
             return update_q(**kwargs)
+        def update_pi_profiling(**kwargs):
+            return update_pi(**kwargs)
 
         # First run one gradient descent step for Q1 and Q2
         (
@@ -363,7 +365,7 @@ def td3(
         # Possibly update pi and target networks
         if timer % policy_delay == 0:
             # Next run one gradient descent step for pi.
-            opt_state_pi, ac_params_pi, loss_pi = update_pi(
+            opt_state_pi, ac_params_pi, loss_pi = update_pi_profiling(
                 opt_params=optimizer_params, ac_params=ac.params, data=data, rng=rng
             )
             optimizer_params = core.ACParams(

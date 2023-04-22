@@ -11,7 +11,7 @@ size = (256, 256, 256)
 batch_size = 100
 
 for i in range(3):
-    exp_name = f"3.8best_td3_{env_name}_ac{size}_batch{batch_size}_seed{i}"
+    exp_name = f"jax_prof_td3_{env_name}_ac{size}_batch{batch_size}_seed{i}"
     ac_kwargs = dict(hidden_sizes=size) #, activation=torch.nn.ReLU)
     logger_kwargs = dict(output_dir='data', exp_name=exp_name)
 

@@ -334,6 +334,9 @@ def td3(
     def update(
         optimizer_params: core.ACParams, data: dict, timer: int, rng: jnp.ndarray
     ):
+        def update_q_profiling(**kwargs):
+            return update_q(**kwargs)
+
         # First run one gradient descent step for Q1 and Q2
         (
             opt_state_q1,
@@ -342,7 +345,7 @@ def td3(
             ac_params_q2,
             loss_q,
             loss_info,
-        ) = update_q(
+        ) = update_q_profiling(
             optimizer_params=optimizer_params,
             ac_params=ac.params,
             ac_tgt_params=ac_tgt.params,

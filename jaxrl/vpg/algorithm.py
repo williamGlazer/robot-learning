@@ -275,27 +275,27 @@ def vpg(
         vf_new_params = optax.apply_updates(params=v_params, updates=vf_updates)
         return vf_opt_state, vf_new_params, loss_v
 
-    def update(pi_opt_state, vf_opt_state, step_rng, warmup=False):
+    def update(pi_opt_state, vf_opt_state, step_rng):
         data = buf.get()
 
-        def update_pi_profiling(pi_opt_state, data, step_rng):
-            return update_pi(pi_opt_state, ac.pi_params, data, step_rng)
+        def update_pi_profiling(*args):
+            return update_pi(*args)
+        def update_vf_profiling(*args):
+            return update_vf(*args)
+
         pi_opt_state, pi_params, loss_pi, pi_info = update_pi_profiling(
-            pi_opt_state, data, step_rng
+            pi_opt_state, ac.pi_params, data, step_rng
         )
 
-
-        if not warmup:
-            ac.pi_params = pi_params
+        ac.pi_params = pi_params
         old_loss_pi, _ = compute_loss_pi(ac.pi_params, data, step_rng)
 
         # Value function learning
         for i in range(train_v_iters):
-            vf_opt_state, vf_params, loss_v = update_vf(
+            vf_opt_state, vf_params, loss_v = update_vf_profiling(
                 vf_opt_state, ac.v_params, data, step_rng
             )
-            if not warmup:
-                ac.v_params = vf_params
+            ac.v_params = vf_params
             if i == 0:
                 first_loss_v = loss_v
 

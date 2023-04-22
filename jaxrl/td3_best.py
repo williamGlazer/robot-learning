@@ -13,7 +13,7 @@ batch_size = 100
 for i in range(3):
     exp_name = f"jax_prof_td3_{env_name}_ac{size}_batch{batch_size}_seed{i}"
     ac_kwargs = dict(hidden_sizes=size) #, activation=torch.nn.ReLU)
-    logger_kwargs = dict(output_dir='data', exp_name=exp_name)
+    logger_kwargs = dict(output_dir='../data', exp_name=exp_name)
 
     td3(
         env_fn,
@@ -22,5 +22,5 @@ for i in range(3):
         batch_size=batch_size,
         logger_kwargs=logger_kwargs,
         save_freq=1,
-        epochs=500
+        epochs=300
     )

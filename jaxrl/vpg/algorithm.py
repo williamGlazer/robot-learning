@@ -317,9 +317,12 @@ def vpg(
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
     profiler = cProfile.Profile()
-    profiler.enable()
+    n_epochs = 0
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
+        if n_epochs == 1:
+            profiler.enable()
+        n_epochs += 1
         for t in range(steps_per_epoch):
             key, step_rng = jax.random.split(key)
             a, v, logp = ac.forward(ac.pi_params, ac.v_params, o, step_rng)
@@ -380,12 +383,9 @@ def vpg(
 
     profiler.disable()
 
-    from pathlib import Path
     prof_idx = 0
-    dir = Path('./prof')
-    dir.mkdir(exist_ok=True)
     while True:
-        prof_file = f'prof/jax_vpg_{prof_idx}'
+        prof_file = f'../prof/jax_vpg_{prof_idx}'
         if not osp.exists(prof_file):
             break
         prof_idx += 1

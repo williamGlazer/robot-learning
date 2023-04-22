@@ -282,9 +282,12 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
     profiler = cProfile.Profile()
-    profiler.enable()
+    n_epochs = 0
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
+        if n_epochs == 1:
+            profiler.enable()
+        n_epochs += 1
         for t in range(local_steps_per_epoch):
             a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
 
@@ -343,7 +346,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     prof_idx = 0
     while True:
-        prof_file = f'prof/gpu_vpg_{prof_idx}'
+        prof_file = f'../prof/torch_gpu_vpg_{prof_idx}'
         if not osp.exists(prof_file):
             break
         prof_idx += 1

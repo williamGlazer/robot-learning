@@ -414,10 +414,13 @@ def td3(
     start_time = time.time()
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
-    # Main loop: collect experience in env and update/log each epoch
     profiler = cProfile.Profile()
-    profiler.enable()
+    n_steps = 0
+    # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
+        if n_steps == 1:
+            profiler.enable()
+        n_steps += 1
         key, step_rng = jax.random.split(key)
 
         # Until start_steps have elapsed, randomly sample actions
@@ -483,13 +486,13 @@ def td3(
 
         profiler.disable()
 
-        prof_idx = 0
-        while True:
-            prof_file = f'prof/jax_td3_{prof_idx}'
-            if not osp.exists(prof_file):
-                break
-            prof_idx += 1
-        profiler.dump_stats(prof_file)
+    prof_idx = 0
+    while True:
+        prof_file = f'../prof/jax_td3_{prof_idx}'
+        if not osp.exists(prof_file):
+            break
+        prof_idx += 1
+    profiler.dump_stats(prof_file)
 
 
 if __name__ == "__main__":

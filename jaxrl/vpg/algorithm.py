@@ -4,7 +4,7 @@ import jax
 from optax import adam
 import gym
 import time
-import core
+import jaxrl.vpg.core as core
 from jaxrl.utils.logx import EpochLogger
 import cProfile
 import os.path as osp
@@ -278,9 +278,13 @@ def vpg(
     def update(pi_opt_state, vf_opt_state, step_rng, warmup=False):
         data = buf.get()
 
-        pi_opt_state, pi_params, loss_pi, pi_info = update_pi(
-            pi_opt_state, ac.pi_params, data, step_rng
+        def update_pi_profiling(pi_opt_state, data, step_rng):
+            return update_pi(pi_opt_state, ac.pi_params, data, step_rng)
+        pi_opt_state, pi_params, loss_pi, pi_info = update_pi_profiling(
+            pi_opt_state, data, step_rng
         )
+
+
         if not warmup:
             ac.pi_params = pi_params
         old_loss_pi, _ = compute_loss_pi(ac.pi_params, data, step_rng)
@@ -380,7 +384,10 @@ def vpg(
 
     profiler.disable()
 
+    from pathlib import Path
     prof_idx = 0
+    dir = Path('./prof')
+    dir.mkdir(exist_ok=True)
     while True:
         prof_file = f'prof/jax_vpg_{prof_idx}'
         if not osp.exists(prof_file):
@@ -406,7 +413,7 @@ if __name__ == "__main__":
     from jaxrl.utils.run_utils import setup_logger_kwargs
 
     logger_kwargs = setup_logger_kwargs(
-        args.exp_name, seed=args.seed, data_dir="../../data"
+        args.exp_name, seed=args.seed
     )
 
     vpg(

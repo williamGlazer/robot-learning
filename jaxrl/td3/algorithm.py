@@ -14,6 +14,9 @@ import haiku as hk
 import jaxrl.td3.core as core
 from jaxrl.utils.logx import EpochLogger
 
+import cProfile
+import os.path as osp
+
 
 class ReplayBuffer:
     """
@@ -331,6 +334,11 @@ def td3(
     def update(
         optimizer_params: core.ACParams, data: dict, timer: int, rng: jnp.ndarray
     ):
+        def update_q_profiling(**kwargs):
+            return update_q(**kwargs)
+        def update_pi_profiling(**kwargs):
+            return update_pi(**kwargs)
+
         # First run one gradient descent step for Q1 and Q2
         (
             opt_state_q1,
@@ -339,7 +347,7 @@ def td3(
             ac_params_q2,
             loss_q,
             loss_info,
-        ) = update_q(
+        ) = update_q_profiling(
             optimizer_params=optimizer_params,
             ac_params=ac.params,
             ac_tgt_params=ac_tgt.params,
@@ -357,7 +365,7 @@ def td3(
         # Possibly update pi and target networks
         if timer % policy_delay == 0:
             # Next run one gradient descent step for pi.
-            opt_state_pi, ac_params_pi, loss_pi = update_pi(
+            opt_state_pi, ac_params_pi, loss_pi = update_pi_profiling(
                 opt_params=optimizer_params, ac_params=ac.params, data=data, rng=rng
             )
             optimizer_params = core.ACParams(
@@ -406,8 +414,13 @@ def td3(
     start_time = time.time()
     (o, _), ep_ret, ep_len = env.reset(), 0, 0
 
+    profiler = cProfile.Profile()
+    n_steps = 0
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
+        if n_steps == 1:
+            profiler.enable()
+        n_steps += 1
         key, step_rng = jax.random.split(key)
 
         # Until start_steps have elapsed, randomly sample actions
@@ -470,6 +483,16 @@ def td3(
             logger.log_tabular("LossQ", average_only=True)
             logger.log_tabular("Time", time.time() - start_time)
             logger.dump_tabular()
+
+        profiler.disable()
+
+    prof_idx = 0
+    while True:
+        prof_file = f'../prof/jax_td3_{prof_idx}'
+        if not osp.exists(prof_file):
+            break
+        prof_idx += 1
+    profiler.dump_stats(prof_file)
 
 
 if __name__ == "__main__":

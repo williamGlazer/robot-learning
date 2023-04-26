@@ -13,3 +13,4 @@ gym
 joblib
 mujoco_py
 tensorflow_probability
+typing-extensions
